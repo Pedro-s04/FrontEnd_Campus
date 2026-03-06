@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 14px;
+    color: #1f2937;
+    background: #f3f4f6;
+  }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+}
+
+@layer components {
+  /* Sidebar nav items */
+  .nav-item {
+    @apply flex items-center gap-2.5 px-4 py-2.5 cursor-pointer text-white/65 text-sm font-normal
+           transition-all duration-150 border-l-[3px] border-transparent;
+  }
+  .nav-item:hover { @apply bg-white/[0.06] text-white/90; }
+  .nav-item.active {
+    @apply bg-pj-accent/20 text-white border-l-pj-accent font-medium;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-sm font-medium
+           cursor-pointer border transition-all duration-150 leading-none;
+  }
+  .btn-primary  { @apply bg-pj-mid text-white border-pj-mid hover:bg-pj-blue hover:border-pj-blue; }
+  .btn-secondary { @apply bg-white text-gray-700 border-gray-300 hover:bg-gray-50; }
+  .btn-danger   { @apply bg-danger text-white border-danger hover:bg-red-700; }
+  .btn-ghost    { @apply bg-transparent text-pj-mid border-transparent hover:bg-pj-pale; }
+  .btn-sm       { @apply px-2.5 py-1 text-xs; }
+
+  /* Form controls */
+  .form-control {
+    @apply w-full h-9 px-2.5 border border-gray-300 rounded-md font-sans text-sm text-gray-800
+           outline-none transition-all duration-150;
+  }
+  .form-control:focus { @apply border-pj-accent ring-2 ring-pj-mid/10; }
+  .form-control.error { @apply border-danger; }
+
+  /* Badges */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap;
+  }
+  .badge-solicitado { @apply bg-gray-100 text-gray-600; }
+  .badge-asignado   { @apply bg-info-light text-info; }
+  .badge-en_curso   { @apply bg-warning-light text-warning; }
+  .badge-cerrado    { @apply bg-success-light text-success; }
+  .badge-pendiente  { @apply bg-purple-100 text-purple-700; }
+  .badge-alta       { @apply bg-danger-light text-danger; }
+  .badge-media      { @apply bg-warning-light text-warning; }
+  .badge-baja       { @apply bg-success-light text-success; }
+  .badge-operativo  { @apply bg-success-light text-success; }
+  .badge-en_reparacion { @apply bg-warning-light text-warning; }
+  .badge-deposito   { @apply bg-info-light text-info; }
+  .badge-de_baja    { @apply bg-gray-100 text-gray-500; }
+  .badge-vigente    { @apply bg-success-light text-success; }
+  .badge-vencida    { @apply bg-danger-light text-danger; }
+  .badge-por_vencer { @apply bg-warning-light text-warning; }
+
+  /* Table */
+  .table-wrap {
+    @apply bg-white border border-gray-200 rounded-lg overflow-hidden;
+  }
+  .th {
+    @apply bg-gray-50 px-3.5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide
+           text-gray-500 border-b border-gray-200 whitespace-nowrap;
+  }
+  .td {
+    @apply px-3.5 py-3 text-sm text-gray-700;
+  }
+  .tr-body {
+    @apply border-b border-gray-100 cursor-pointer transition-colors duration-100
+           last:border-b-0 hover:bg-pj-pale;
+  }
+
+  /* Cards */
+  .card {
+    @apply bg-white border border-gray-200 rounded-lg p-5 mb-4 last:mb-0;
+  }
+  .card-title {
+    @apply text-xs font-semibold text-gray-600 uppercase tracking-wide
+           mb-3.5 pb-2.5 border-b border-gray-100;
+  }
+
+  /* Filter controls */
+  .filter-select {
+    @apply h-8 px-2.5 border border-gray-300 rounded-md font-sans text-sm text-gray-700
+           bg-white cursor-pointer outline-none;
+  }
+  .filter-select:focus { @apply border-pj-accent; }
+
+  .search-input {
+    @apply h-8 pl-8 pr-2.5 border border-gray-300 rounded-md font-sans text-sm text-gray-700
+           bg-white outline-none min-w-[200px];
+  }
+  .search-input:focus { @apply border-pj-accent; }
+}
