@@ -15,9 +15,11 @@ export const usuariosService = {
 
 // ── ORGANIZACIÓN ─────────────────────────────────────────────
 export const organizacionService = {
+  obtenerArbol:  ()       => api.get('/organizacion'),
   listar:        ()       => api.get('/organizacion'),
   listarJuzgados:()       => api.get('/organizacion/juzgados'),
   crear:         (data)   => api.post('/organizacion', data),
+  actualizar:    (tipo, id, data) => api.patch(`/organizacion/${tipo}/${id}`, data),
   modificar:     (tipo, id, data) => api.patch(`/organizacion/${tipo}/${id}`, data),
 }
 

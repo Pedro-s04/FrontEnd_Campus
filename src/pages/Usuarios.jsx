@@ -25,6 +25,20 @@ function validateEdit(form) {
   return e
 }
 
+function resolveRol(user) {
+  const fromRolObject = typeof user?.rol === 'object'
+    ? (user.rol?.nombre || user.rol?.codigo || user.rol?.rol)
+    : null
+
+  const fromRolString = typeof user?.rol === 'string' ? user.rol : null
+
+  const roleId = user?.rolId ?? user?.idRol ?? user?.rol?.id ?? (typeof user?.rol === 'number' ? user.rol : null)
+  const fromId = roleId != null ? ROLES_MAP[Number(roleId)] : null
+
+  const normalized = (fromRolString || fromRolObject || user?.rolNombre || user?.role || fromId || '').toString().trim().toUpperCase()
+  return normalized
+}
+
 export default function Usuarios() {
   const { run, loading: saving } = useAsync()
 
@@ -170,31 +184,36 @@ export default function Usuarios() {
                 <tr><td colSpan={7} className="td text-center py-12"><Spinner /></td></tr>
               ) : items.length === 0 ? (
                 <tr><td colSpan={7}><EmptyState title="Sin usuarios" text="No se encontraron usuarios." /></td></tr>
-              ) : items.map(u => (
-                <tr key={u.id} className="tr-body">
-                  <td className="td font-mono text-xs text-gray-500">{u.legajo}</td>
-                  <td className="td font-medium text-gray-800">{u.nombre}</td>
-                  <td className="td text-sm text-gray-500">{u.username}</td>
-                  <td className="td text-sm text-gray-400">{u.email || '-'}</td>
-                  <td className="td"><Badge value={u.rol} /></td>
-                  <td className="td">
-                    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${u.activo ? 'text-success' : 'text-gray-400'}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${u.activo ? 'bg-success' : 'bg-gray-300'}`} />
-                      {u.activo ? 'Activo' : 'Baja'}
-                    </span>
-                  </td>
-                  <td className="td">
-                    <div className="flex gap-1.5">
-                      <button className="btn btn-ghost btn-sm" onClick={() => openEdit(u)}>Editar</button>
-                      {u.activo && (
-                        <button className="btn btn-sm bg-transparent border-transparent text-danger hover:bg-danger-light" onClick={() => handleBaja(u)}>
-                          Baja
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              ) : items.map(u => {
+                const roleLabel = resolveRol(u)
+                return (
+                  <tr key={u.id} className="tr-body">
+                    <td className="td font-mono text-xs text-gray-500">{u.legajo}</td>
+                    <td className="td font-medium text-gray-800">{u.nombre}</td>
+                    <td className="td text-sm text-gray-500">{u.username}</td>
+                    <td className="td text-sm text-gray-400">{u.email || '-'}</td>
+                    <td className="td">
+                      {roleLabel ? <Badge value={roleLabel} /> : <span className="text-gray-400 text-sm">-</span>}
+                    </td>
+                    <td className="td">
+                      <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${u.activo ? 'text-success' : 'text-gray-400'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${u.activo ? 'bg-success' : 'bg-gray-300'}`} />
+                        {u.activo ? 'Activo' : 'Baja'}
+                      </span>
+                    </td>
+                    <td className="td">
+                      <div className="flex gap-1.5">
+                        <button className="btn btn-ghost btn-sm" onClick={() => openEdit(u)}>Editar</button>
+                        {u.activo && (
+                          <button className="btn btn-sm bg-transparent border-transparent text-danger hover:bg-danger-light" onClick={() => handleBaja(u)}>
+                            Baja
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

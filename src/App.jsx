@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useState, useCallback, useEffect } from 'react'
 import { AuthProvider } from './context/AuthContext'
-import { ProtectedRoute, ToastContainer, setToastCallback } from './components'
+import { ProtectedRoute, PublicRoute, ToastContainer, setToastCallback } from './components'
 import Layout from './components/Layout'
 import Login       from './pages/Login'
 import Dashboard   from './pages/Dashboard'
@@ -31,7 +31,7 @@ function AppInner() {
   return (
     <>
       <Routes>
-        <Route path="/login" element={<Login />} />
+        <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
 
         <Route path="/" element={
           <ProtectedRoute><Navigate to="/tickets" replace /></ProtectedRoute>

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Navigate, useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 // ── BADGE ────────────────────────────────────────────────────
@@ -104,13 +104,45 @@ export function FormGroup({ label, required, error, children }) {
 export function ProtectedRoute({ children, allowedRoles }) {
   const { user, token, loading } = useAuth()
   const location = useLocation()
+  const navigate = useNavigate()
+
+  const hasSession = Boolean(token && user)
+  const hasRoleAccess = !allowedRoles || allowedRoles.includes(user?.rol)
+
+  useEffect(() => {
+    if (loading) return
+
+    if (!hasSession) {
+      navigate('/login', { replace: true, state: { from: location } })
+      return
+    }
+
+    if (!hasRoleAccess) {
+      navigate('/tickets', { replace: true })
+    }
+  }, [loading, hasSession, hasRoleAccess, navigate, location])
 
   if (loading) return <LoadingScreen />
-  if (!token || !user) return <Navigate to="/login" state={{ from: location }} replace />
+  if (!hasSession) return null
+  if (!hasRoleAccess) return null
 
-  if (allowedRoles && !allowedRoles.includes(user.rol)) {
-    return <Navigate to="/" replace />
-  }
+  return children
+}
+
+export function PublicRoute({ children }) {
+  const { user, token, loading } = useAuth()
+  const navigate = useNavigate()
+
+  const hasSession = Boolean(token && user)
+
+  useEffect(() => {
+    if (!loading && hasSession) {
+      navigate('/tickets', { replace: true })
+    }
+  }, [loading, hasSession, navigate])
+
+  if (loading) return <LoadingScreen />
+  if (hasSession) return null
 
   return children
 }

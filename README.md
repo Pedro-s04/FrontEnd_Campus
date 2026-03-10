@@ -54,7 +54,13 @@ R = solo lectura, RW = lectura y escritura, - = sin acceso
 
 ## Configuracion
 
-URL base de la API definida en `src/api/axiosInstance.js`:
+En desarrollo, Vite usa proxy para enrutar `/api` hacia backend `http://localhost:8081`.
+La URL base de la API se define en `src/api/axiosInstance.js` y por defecto usa ruta relativa:
 ```
-http://localhost:8081/api/v1
+/api/v1
+```
+
+Opcionalmente, puedes sobreescribirla con variable de entorno:
+```
+VITE_API_BASE_URL=http://localhost:8081/api/v1
 ```
