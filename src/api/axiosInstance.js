@@ -5,6 +5,8 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+let redirectingToLogin = false
+
 // Request interceptor — attach JWT
 api.interceptors.request.use(
   (config) => {
@@ -22,9 +24,21 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('pj_token')
-      localStorage.removeItem('pj_user')
-      window.location.href = '/login'
+      const requestUrl = error.config?.url || ''
+      const isLoginRequest = requestUrl.includes('/auth/login')
+      const hasStoredSession = Boolean(localStorage.getItem('pj_token'))
+      const isInLoginRoute = window.location.pathname === '/login'
+
+      // Avoid redirect loops for auth/login failures or unauthenticated public flows.
+      if (!isLoginRequest && hasStoredSession) {
+        localStorage.removeItem('pj_token')
+        localStorage.removeItem('pj_user')
+
+        if (!isInLoginRoute && !redirectingToLogin) {
+          redirectingToLogin = true
+          window.location.assign('/login')
+        }
+      }
     }
     return Promise.reject(error)
   }

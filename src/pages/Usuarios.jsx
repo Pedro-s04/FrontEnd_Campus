@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { usuariosService, organizacionService } from '../services'
 import { useAsync } from '../hooks/useAsync'
-import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast } from '../components'
+import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast, confirmDialog } from '../components'
 
 const ROLES_MAP = { 1: 'ADMINISTRADOR', 2: 'OPERADOR', 3: 'TECNICO' }
 
 const EMPTY_FORM = { legajo: '', username: '', nombre: '', email: '', password: '', rolId: '2', juzgadoId: '' }
+const getApiError = (err, fallback) => err.response?.data?.error?.message || err.response?.data?.message || fallback
 
 function validateCreate(form) {
   const e = {}
@@ -45,7 +46,9 @@ export default function Usuarios() {
   const [items,      setItems]      = useState([])
   const [loading,    setLoading]    = useState(true)
   const [search,     setSearch]     = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [fRol,       setFRol]       = useState('')
+  const [fActivo,    setFActivo]    = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [showEdit,   setShowEdit]   = useState(false)
   const [selected,   setSelected]   = useState(null)
@@ -55,22 +58,39 @@ export default function Usuarios() {
   const [editErrors, setEditErrors] = useState({})
   const [juzgados,   setJuzgados]   = useState([])
 
+  useEffect(() => {
+    const timeoutId = setTimeout(() => setDebouncedSearch(search.trim()), 300)
+    return () => clearTimeout(timeoutId)
+  }, [search])
+
   async function load() {
     setLoading(true)
     try {
-      const res = await usuariosService.listar({ rol: fRol, search, page: 0, size: 50 })
+      const params = { page: 0, size: 50 }
+      if (fRol) params.rol = fRol
+      if (debouncedSearch) params.search = debouncedSearch
+      if (fActivo === 'true') params.activo = true
+      if (fActivo === 'false') params.activo = false
+
+      const res = await usuariosService.listar(params)
       const d = res.data?.data
       setItems(Array.isArray(d) ? d : d?.content ?? [])
-    } catch (_) {}
+    } catch (err) {
+      showToast(getApiError(err, 'Error al cargar usuarios'), 'error')
+      setItems([])
+    }
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [fRol, search])
+  useEffect(() => { load() }, [fRol, debouncedSearch, fActivo])
 
   useEffect(() => {
     organizacionService.listarJuzgados()
       .then(r => setJuzgados(r.data?.data ?? []))
-      .catch(() => {})
+      .catch(err => {
+        showToast(getApiError(err, 'No se pudieron cargar juzgados'), 'error')
+        setJuzgados([])
+      })
   }, [])
 
   function openEdit(u) {
@@ -105,7 +125,7 @@ export default function Usuarios() {
       setForm(EMPTY_FORM)
       load()
     } catch (err) {
-      showToast(err.response?.data?.message || 'Error al crear usuario', 'error')
+      showToast(getApiError(err, 'Error al crear usuario'), 'error')
     }
   }
 
@@ -125,18 +145,26 @@ export default function Usuarios() {
       setShowEdit(false)
       load()
     } catch (err) {
-      showToast(err.response?.data?.message || 'Error al actualizar', 'error')
+      showToast(getApiError(err, 'Error al actualizar'), 'error')
     }
   }
 
   async function handleBaja(u) {
-    if (!confirm(`Dar de baja a ${u.nombre}?`)) return
+    const confirmed = await confirmDialog({
+      title: 'Dar de baja usuario',
+      text: `Se dara de baja a ${u.nombre}.`,
+      confirmText: 'Si, dar de baja',
+      cancelText: 'Cancelar',
+      icon: 'warning',
+    })
+    if (!confirmed) return
+
     try {
       await usuariosService.eliminar(u.id)
       showToast('Usuario dado de baja', 'success')
       load()
     } catch (err) {
-      showToast(err.response?.data?.message || 'Error', 'error')
+      showToast(getApiError(err, 'Error'), 'error')
     }
   }
 
@@ -162,6 +190,11 @@ export default function Usuarios() {
           <option value="ADMINISTRADOR">Administrador</option>
           <option value="OPERADOR">Operador</option>
           <option value="TECNICO">Tecnico</option>
+        </select>
+        <select className="filter-select" value={fActivo} onChange={e => setFActivo(e.target.value)}>
+          <option value="">Todos los estados</option>
+          <option value="true">Activos</option>
+          <option value="false">Baja</option>
         </select>
       </div>
 

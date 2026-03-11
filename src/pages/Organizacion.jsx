@@ -181,8 +181,7 @@ export default function Organizacion() {
   async function loadTree(showLoader = true) {
     if (showLoader) setLoading(true)
     try {
-      const fetchTree = organizacionService.obtenerArbol || organizacionService.listar
-      const res = await fetchTree()
+      const res = await organizacionService.obtenerArbol()
       setTree(normalizeTreeData(res.data?.data))
     } catch (_) {
       showToast('Error al cargar la estructura organizacional.', 'error')
@@ -238,8 +237,7 @@ export default function Organizacion() {
 
     setEditErrors({})
     try {
-      const updateFn = organizacionService.actualizar || organizacionService.modificar
-      await run(updateFn(editForm.tipo, editForm.id, buildPayload(editForm)))
+      await run(organizacionService.actualizar(editForm.tipo, editForm.id, buildPayload(editForm)))
       showToast('Nodo actualizado correctamente.', 'success')
       setShowEdit(false)
       await loadTree(false)

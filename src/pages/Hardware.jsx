@@ -1,10 +1,30 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { hardwareService, organizacionService } from '../services'
 import { useAsync } from '../hooks/useAsync'
 import { useAuth } from '../context/AuthContext'
 import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast } from '../components'
 
-const ESTADOS = ['', 'operativo', 'en_reparacion', 'deposito', 'de_baja']
+const ESTADOS = ['', 'operativo', 'en_reparacion', 'en_deposito', 'baja']
+const formatEnum = (value) => (value || '').toLowerCase().replace('_', ' ')
+const normalizeHardwareValue = (value) => (value || '').toLowerCase()
+const getApiError = (err, fallback) => err.response?.data?.error?.message || err.response?.data?.message || fallback
+const getValidationDetail = (err) => err.response?.data?.error?.details?.[0]?.message
+
+function toBackendEstado(value) {
+  const normalized = normalizeHardwareValue(value)
+  if (normalized === 'deposito') return 'en_deposito'
+  if (normalized === 'de_baja') return 'baja'
+  return normalized
+}
+
+function validateCreate(form) {
+  const e = {}
+  if (!form.marca.trim()) e.marca = 'La marca es obligatoria.'
+  if (!form.modelo.trim()) e.modelo = 'El modelo es obligatorio.'
+  if (!form.numeroSerie.trim()) e.numeroSerie = 'El numero de serie es obligatorio.'
+  if (!form.tipoId || Number(form.tipoId) <= 0) e.tipoId = 'El tipo es obligatorio.'
+  return e
+}
 
 export default function Hardware() {
   const { isAdmin, isOperador } = useAuth()
@@ -14,28 +34,50 @@ export default function Hardware() {
   const [items,    setItems]    = useState([])
   const [loading,  setLoading]  = useState(true)
   const [search,   setSearch]   = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [fEstado,  setFEstado]  = useState('')
+  const [fJuzgadoId, setFJuzgadoId] = useState('')
   const [selected, setSelected] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
   const [showEdit,   setShowEdit]   = useState(false)
   const [juzgados,   setJuzgados]   = useState([])
+  const [errors, setErrors] = useState({})
+
+  const juzgadoNameById = useMemo(
+    () => Object.fromEntries(juzgados.map((j) => [String(j.id), j.nombre])),
+    [juzgados]
+  )
 
   const [form, setForm] = useState({
     marca: '', modelo: '', numeroSerie: '', tipoId: 1,
     juzgadoId: '', estado: 'operativo', observaciones: ''
   })
 
+  useEffect(() => {
+    const timeoutId = setTimeout(() => setDebouncedSearch(search.trim()), 300)
+    return () => clearTimeout(timeoutId)
+  }, [search])
+
   async function load() {
     setLoading(true)
     try {
-      const res = await hardwareService.listar({ estado: fEstado, search, page: 0, size: 50 })
+      const params = { page: 0, size: 50 }
+      if (ESTADOS.includes(fEstado) && fEstado) params.estado = fEstado
+      if (debouncedSearch) params.search = debouncedSearch
+      if (fJuzgadoId) params.juzgadoId = Number(fJuzgadoId)
+
+      const res = await hardwareService.listar(params)
+
       const d = res.data?.data
       setItems(Array.isArray(d) ? d : d?.content ?? [])
-    } catch (_) {}
+    } catch (err) {
+      showToast(getApiError(err, 'Error al cargar hardware'), 'error')
+      setItems([])
+    }
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [fEstado, search])
+  useEffect(() => { load() }, [fEstado, debouncedSearch, fJuzgadoId])
 
   useEffect(() => {
     organizacionService.listarJuzgados().then(r => setJuzgados(r.data?.data ?? []))
@@ -47,43 +89,84 @@ export default function Hardware() {
       marca: item.marca || '', modelo: item.modelo || '',
       numeroSerie: item.numeroSerie || '', tipoId: item.tipoId || 1,
       juzgadoId: item.juzgado?.id || item.juzgadoId || '',
-      estado: item.estado || 'operativo', observaciones: item.observaciones || ''
+      estado: toBackendEstado(item.estado || 'operativo'), observaciones: item.observaciones || ''
     })
     setShowEdit(true)
   }
 
   async function handleCreate(e) {
     e.preventDefault()
+    const errs = validateCreate(form)
+    if (Object.keys(errs).length) {
+      setErrors(errs)
+      return
+    }
+    setErrors({})
+
     try {
-      await run(hardwareService.crear({
-        ...form,
+      const basePayload = {
+        marca: form.marca.trim(),
+        modelo: form.modelo.trim(),
+        numeroSerie: form.numeroSerie.trim(),
         tipoId: Number(form.tipoId),
         juzgadoId: Number(form.juzgadoId) || undefined,
+        observaciones: form.observaciones?.trim() || undefined,
+      }
+
+      await run(hardwareService.crear({
+        ...basePayload,
+        estado: toBackendEstado(form.estado),
       }))
+
       showToast('Equipo registrado', 'success')
       setShowCreate(false)
       setForm({ marca: '', modelo: '', numeroSerie: '', tipoId: 1, juzgadoId: '', estado: 'operativo', observaciones: '' })
       load()
     } catch (err) {
-      showToast(err.response?.data?.message || 'Error al crear', 'error')
+      showToast(getValidationDetail(err) || getApiError(err, 'Error al crear'), 'error')
     }
   }
 
   async function handleEdit(e) {
     e.preventDefault()
     try {
-      await run(hardwareService.actualizar(selected.id, {
-        estado: form.estado,
-        observaciones: form.observaciones,
+      const basePayload = {
+        observaciones: form.observaciones?.trim() || undefined,
         juzgadoId: Number(form.juzgadoId) || undefined,
+      }
+
+      await run(hardwareService.actualizar(selected.id, {
+        ...basePayload,
+        estado: toBackendEstado(form.estado),
       }))
+
       showToast('Equipo actualizado', 'success')
       setShowEdit(false)
       load()
     } catch (err) {
-      showToast(err.response?.data?.message || 'Error al actualizar', 'error')
+      showToast(getValidationDetail(err) || getApiError(err, 'Error al actualizar'), 'error')
     }
   }
+
+  const visibleItems = useMemo(() => {
+    const searchTerm = debouncedSearch.toLowerCase()
+
+    return items.filter((item) => {
+      const estadoItem = toBackendEstado(item.estado)
+      const juzgadoIdItem = String(item.juzgado?.id || item.juzgadoId || '')
+
+      const matchEstado = !fEstado || estadoItem === fEstado
+      const selectedJuzgadoName = juzgadoNameById[String(fJuzgadoId)] || ''
+      const itemJuzgadoName = item.juzgado?.nombre || item.juzgadoNombre || ''
+      const matchJuzgado = !fJuzgadoId
+        || juzgadoIdItem === String(fJuzgadoId)
+        || (selectedJuzgadoName && itemJuzgadoName && itemJuzgadoName === selectedJuzgadoName)
+      const searchable = `${item.marca || ''} ${item.modelo || ''} ${item.numeroSerie || ''} ${item.numeroInventario || ''} ${item.juzgadoNombre || ''} ${juzgadoNameById[String(item.juzgadoId)] || ''}`.toLowerCase()
+      const matchSearch = !searchTerm || searchable.includes(searchTerm)
+
+      return matchEstado && matchJuzgado && matchSearch
+    })
+  }, [items, fEstado, fJuzgadoId, debouncedSearch, juzgadoNameById])
 
   return (
     <div>
@@ -104,7 +187,11 @@ export default function Hardware() {
         <SearchInput value={search} onChange={setSearch} placeholder="Buscar por marca, serie..." />
         <select className="filter-select" value={fEstado} onChange={e => setFEstado(e.target.value)}>
           <option value="">Todos los estados</option>
-          {ESTADOS.filter(Boolean).map(s => <option key={s} value={s}>{s}</option>)}
+          {ESTADOS.filter(Boolean).map(s => <option key={s} value={s}>{formatEnum(s)}</option>)}
+        </select>
+        <select className="filter-select" value={fJuzgadoId} onChange={e => setFJuzgadoId(e.target.value)}>
+          <option value="">Todos los juzgados</option>
+          {juzgados.map(j => <option key={j.id} value={j.id}>{j.nombre}</option>)}
         </select>
       </div>
 
@@ -125,9 +212,9 @@ export default function Hardware() {
             <tbody>
               {loading ? (
                 <tr><td colSpan={7} className="td text-center py-12"><Spinner /></td></tr>
-              ) : items.length === 0 ? (
+              ) : visibleItems.length === 0 ? (
                 <tr><td colSpan={7}><EmptyState title="Sin equipos" text="No se encontraron equipos." /></td></tr>
-              ) : items.map(item => (
+              ) : visibleItems.map(item => (
                 <tr key={item.id} className="tr-body">
                   <td className="td font-mono text-xs text-gray-500">{item.id}</td>
                   <td className="td">
@@ -135,7 +222,7 @@ export default function Hardware() {
                   </td>
                   <td className="td font-mono text-xs text-gray-500">{item.numeroSerie}</td>
                   <td className="td"><Badge value={item.estado} /></td>
-                  <td className="td text-sm text-gray-500">{item.juzgado?.nombre || '-'}</td>
+                  <td className="td text-sm text-gray-500">{item.juzgado?.nombre || item.juzgadoNombre || juzgadoNameById[String(item.juzgadoId)] || '-'}</td>
                   <td className="td text-xs text-gray-400 max-w-[180px] truncate">{item.observaciones || '-'}</td>
                   {canWrite && (
                     <td className="td">
@@ -158,26 +245,30 @@ export default function Hardware() {
         <form onSubmit={handleCreate}>
           <div className="grid grid-cols-2 gap-3.5">
             <FormGroup label="Marca" required>
-              <input className="form-control" value={form.marca} onChange={e => setForm(p => ({...p, marca: e.target.value}))} />
+              <input className={`form-control ${errors.marca ? 'error' : ''}`} value={form.marca} onChange={e => setForm(p => ({...p, marca: e.target.value}))} />
+              {errors.marca && <p className="text-xs text-danger mt-1">{errors.marca}</p>}
             </FormGroup>
             <FormGroup label="Modelo" required>
-              <input className="form-control" value={form.modelo} onChange={e => setForm(p => ({...p, modelo: e.target.value}))} />
+              <input className={`form-control ${errors.modelo ? 'error' : ''}`} value={form.modelo} onChange={e => setForm(p => ({...p, modelo: e.target.value}))} />
+              {errors.modelo && <p className="text-xs text-danger mt-1">{errors.modelo}</p>}
             </FormGroup>
             <FormGroup label="N. de Serie" required>
-              <input className="form-control" value={form.numeroSerie} onChange={e => setForm(p => ({...p, numeroSerie: e.target.value}))} />
+              <input className={`form-control ${errors.numeroSerie ? 'error' : ''}`} value={form.numeroSerie} onChange={e => setForm(p => ({...p, numeroSerie: e.target.value}))} />
+              {errors.numeroSerie && <p className="text-xs text-danger mt-1">{errors.numeroSerie}</p>}
             </FormGroup>
             <FormGroup label="Tipo ID">
-              <input type="number" className="form-control" value={form.tipoId} onChange={e => setForm(p => ({...p, tipoId: e.target.value}))} />
+              <input type="number" className={`form-control ${errors.tipoId ? 'error' : ''}`} value={form.tipoId} onChange={e => setForm(p => ({...p, tipoId: e.target.value}))} min="1" />
+              {errors.tipoId && <p className="text-xs text-danger mt-1">{errors.tipoId}</p>}
             </FormGroup>
             <FormGroup label="Juzgado">
               <select className="form-control" value={form.juzgadoId} onChange={e => setForm(p => ({...p, juzgadoId: e.target.value}))}>
-                <option value="">Deposito (sin juzgado)</option>
+                <option value="">Seleccionar juzgado...</option>
                 {juzgados.map(j => <option key={j.id} value={j.id}>{j.nombre}</option>)}
               </select>
             </FormGroup>
             <FormGroup label="Estado">
               <select className="form-control" value={form.estado} onChange={e => setForm(p => ({...p, estado: e.target.value}))}>
-                {ESTADOS.filter(Boolean).map(s => <option key={s} value={s}>{s}</option>)}
+                {ESTADOS.filter(Boolean).map(s => <option key={s} value={s}>{formatEnum(s)}</option>)}
               </select>
             </FormGroup>
           </div>
@@ -197,12 +288,12 @@ export default function Hardware() {
         <div className="grid grid-cols-2 gap-3.5">
           <FormGroup label="Estado">
             <select className="form-control" value={form.estado} onChange={e => setForm(p => ({...p, estado: e.target.value}))}>
-              {ESTADOS.filter(Boolean).map(s => <option key={s} value={s}>{s}</option>)}
+              {ESTADOS.filter(Boolean).map(s => <option key={s} value={s}>{formatEnum(s)}</option>)}
             </select>
           </FormGroup>
           <FormGroup label="Juzgado">
             <select className="form-control" value={form.juzgadoId} onChange={e => setForm(p => ({...p, juzgadoId: e.target.value}))}>
-              <option value="">Deposito</option>
+              <option value="">Seleccionar juzgado...</option>
               {juzgados.map(j => <option key={j.id} value={j.id}>{j.nombre}</option>)}
             </select>
           </FormGroup>

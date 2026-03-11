@@ -1,7 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { useState, useCallback, useEffect } from 'react'
 import { AuthProvider } from './context/AuthContext'
-import { ProtectedRoute, PublicRoute, ToastContainer, setToastCallback } from './components'
+import { ProtectedRoute, PublicRoute } from './components'
 import Layout from './components/Layout'
 import Login       from './pages/Login'
 import Dashboard   from './pages/Dashboard'
@@ -13,21 +12,7 @@ import Organizacion from './pages/Organizacion'
 import Usuarios    from './pages/Usuarios'
 import NotFound    from './pages/NotFound'
 
-let toastId = 0
-
 function AppInner() {
-  const [toasts, setToasts] = useState([])
-
-  const addToast = useCallback((message, type = 'success') => {
-    const id = ++toastId
-    setToasts(t => [...t, { id, message, type }])
-    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4000)
-  }, [])
-
-  useEffect(() => { setToastCallback(addToast) }, [addToast])
-
-  const removeToast = (id) => setToasts(t => t.filter(x => x.id !== id))
-
   return (
     <>
       <Routes>
@@ -38,11 +23,11 @@ function AppInner() {
         } />
 
         <Route path="/tickets" element={
-          <ProtectedRoute><Layout><Tickets /></Layout></ProtectedRoute>
+          <ProtectedRoute allowedRoles={['ADMINISTRADOR', 'OPERADOR', 'TECNICO']}><Layout><Tickets /></Layout></ProtectedRoute>
         } />
 
         <Route path="/hardware" element={
-          <ProtectedRoute><Layout><Hardware /></Layout></ProtectedRoute>
+          <ProtectedRoute allowedRoles={['ADMINISTRADOR', 'OPERADOR']}><Layout><Hardware /></Layout></ProtectedRoute>
         } />
 
         <Route path="/software" element={
@@ -58,7 +43,7 @@ function AppInner() {
         } />
 
         <Route path="/organizacion" element={
-          <ProtectedRoute><Layout><Organizacion /></Layout></ProtectedRoute>
+          <ProtectedRoute allowedRoles={['ADMINISTRADOR', 'OPERADOR']}><Layout><Organizacion /></Layout></ProtectedRoute>
         } />
 
         <Route path="/usuarios" element={
@@ -68,15 +53,13 @@ function AppInner() {
         } />
 
         <Route path="/dashboard" element={
-          <ProtectedRoute allowedRoles={['ADMINISTRADOR']}>
+          <ProtectedRoute allowedRoles={['ADMINISTRADOR', 'OPERADOR', 'TECNICO']}>
             <Layout><Dashboard /></Layout>
           </ProtectedRoute>
         } />
 
         <Route path="*" element={<NotFound />} />
       </Routes>
-
-      <ToastContainer toasts={toasts} onRemove={removeToast} />
     </>
   )
 }

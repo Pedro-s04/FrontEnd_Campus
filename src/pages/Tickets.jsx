@@ -6,13 +6,59 @@ import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, 
 
 const ESTADOS     = ['solicitado', 'asignado', 'en_curso', 'cerrado']
 const PRIORIDADES = ['alta', 'media', 'baja']
-const EMPTY_FORM  = { descripcion: '', prioridad: 'media', juzgadoId: '', tecnicoId: '', hardwareId: '' }
+const CATEGORIAS  = [
+  { label: 'PC / Notebook', value: 'hardware_pc' },
+  { label: 'Impresora', value: 'hardware_impresora' },
+  { label: 'Red (router/switch)', value: 'hardware_red' },
+  { label: 'Software', value: 'software' },
+  { label: 'Conectividad / Internet', value: 'conectividad' },
+  { label: 'Otro', value: 'otro' },
+]
+const EMPTY_FORM  = { descripcion: '', categoria: '', prioridad: 'media', juzgadoId: '', tecnicoId: '', hardwareId: '' }
+
+const normalizeTicketValue = (value) => (value || '').toLowerCase()
+const formatEnum = (value) => (value || '').toLowerCase().replace('_', ' ')
+const getApiError = (err, fallback) => err.response?.data?.error?.message || err.response?.data?.message || fallback
+const getValidationDetail = (err) => err.response?.data?.error?.details?.[0]?.message
+
+function normalizeRole(value) {
+  return (value || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/^ROLE_/i, '')
+    .toUpperCase()
+}
+
+function onlyActiveTecnicos(list = []) {
+  return (list || []).filter((u) => {
+    const rol = normalizeRole(u?.rol?.nombre || u?.rol || u?.rolNombre || u?.role)
+    const activo = u?.activo
+    return rol === 'TECNICO' && activo !== false
+  })
+}
 
 function validate(form) {
   const e = {}
   if (!form.descripcion.trim())            e.descripcion = 'La descripcion es obligatoria.'
   else if (form.descripcion.trim().length < 10) e.descripcion = 'Minimo 10 caracteres.'
+  if (!form.categoria.trim())              e.categoria   = 'La categoria es obligatoria.'
   if (!form.juzgadoId)                     e.juzgadoId   = 'Seleccione un juzgado.'
+
+  if (form.tecnicoId) {
+    const tecnicoId = Number(form.tecnicoId)
+    if (!Number.isInteger(tecnicoId) || tecnicoId <= 0) {
+      e.tecnicoId = 'El tecnico debe ser un ID valido.'
+    }
+  }
+
+  if (form.hardwareId) {
+    const hardwareId = Number(form.hardwareId)
+    if (!Number.isInteger(hardwareId) || hardwareId <= 0) {
+      e.hardwareId = 'El Hardware ID debe ser un entero positivo.'
+    }
+  }
+
   return e
 }
 
@@ -34,7 +80,7 @@ function BitacoraTimeline({ entries }) {
 }
 
 function StatusFlow({ estado }) {
-  const idx = ESTADOS.indexOf(estado)
+  const idx = ESTADOS.indexOf(normalizeTicketValue(estado))
   return (
     <div className="flex mb-4">
       {ESTADOS.map((s, i) => (
@@ -42,7 +88,7 @@ function StatusFlow({ estado }) {
           ${i < idx  ? 'text-pj-mid border-pj-mid' :
             i === idx ? 'text-warning border-warning font-semibold' :
                         'text-gray-300 border-gray-200'}`}>
-          {s.replace('_', ' ')}
+          {formatEnum(s)}
         </div>
       ))}
     </div>
@@ -50,7 +96,7 @@ function StatusFlow({ estado }) {
 }
 
 export default function Tickets() {
-  const { isAdmin, isOperador } = useAuth()
+  const { user, isAdmin, isOperador, isTecnico } = useAuth()
   const canWrite = isAdmin || isOperador
   const { run, loading: saving } = useAsync()
 
@@ -60,6 +106,7 @@ export default function Tickets() {
   const [detail,     setDetail]     = useState(null)
   const [detailLoad, setDetailLoad] = useState(false)
   const [search,     setSearch]     = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [fEstado,    setFEstado]    = useState('')
   const [fPrioridad, setFPrioridad] = useState('')
   const [showCreate,   setShowCreate]   = useState(false)
@@ -69,29 +116,62 @@ export default function Tickets() {
   const [form,     setForm]     = useState(EMPTY_FORM)
   const [errors,   setErrors]   = useState({})
   const [bText,    setBText]    = useState('')
-  const [editForm, setEditForm] = useState({ estado: '', prioridad: '', tecnicoId: '' })
+  const [editForm, setEditForm] = useState({ estado: '', prioridad: '', tecnicoId: '', resolucion: '' })
   const [juzgados, setJuzgados] = useState([])
   const [tecnicos, setTecnicos] = useState([])
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => setDebouncedSearch(search.trim()), 300)
+    return () => clearTimeout(timeoutId)
+  }, [search])
 
   async function loadTickets() {
     setLoading(true)
     try {
-      const res = await ticketsService.listar({ estado: fEstado, prioridad: fPrioridad, search, page: 0, size: 50 })
+      const params = {
+        page: 0,
+        size: 50,
+      }
+
+      if (ESTADOS.includes(fEstado)) params.estado = fEstado
+      if (PRIORIDADES.includes(fPrioridad)) params.prioridad = fPrioridad
+      if (debouncedSearch) params.search = debouncedSearch
+      if (isTecnico) {
+        const tecnicoId = Number(user?.id)
+        if (!Number.isNaN(tecnicoId) && tecnicoId > 0) {
+          params.tecnicoId = tecnicoId
+        }
+      }
+
+      const res = await ticketsService.listar(params)
       const data = res.data?.data
       setTickets(Array.isArray(data) ? data : data?.content ?? [])
-    } catch (_) {}
+    } catch (err) {
+      showToast(getApiError(err, 'Error al cargar tickets'), 'error')
+      setTickets([])
+    }
     setLoading(false)
   }
 
-  useEffect(() => { loadTickets() }, [fEstado, fPrioridad, search])
+  useEffect(() => { loadTickets() }, [fEstado, fPrioridad, debouncedSearch, isTecnico, user?.id])
 
   useEffect(() => {
-    organizacionService.listarJuzgados().then(r => setJuzgados(r.data?.data ?? []))
-    usuariosService.listar({ rol: 'TECNICO', activo: true, size: 100 }).then(r => {
-      const d = r.data?.data
-      setTecnicos(Array.isArray(d) ? d : d?.content ?? [])
-    })
-  }, [])
+    if (!canWrite) return
+
+    organizacionService
+      .listarJuzgados()
+      .then(r => setJuzgados(r.data?.data ?? []))
+      .catch(err => showToast(getApiError(err, 'No se pudieron cargar juzgados'), 'error'))
+
+    usuariosService
+      .listar({ rol: 'TECNICO', activo: true, size: 100 })
+      .then(r => {
+        const d = r.data?.data
+        const list = Array.isArray(d) ? d : d?.content ?? []
+        setTecnicos(onlyActiveTecnicos(list))
+      })
+      .catch(err => showToast(getApiError(err, 'No se pudieron cargar tecnicos'), 'error'))
+  }, [canWrite])
 
   async function openDetail(t) {
     setSelected(t)
@@ -107,7 +187,12 @@ export default function Tickets() {
 
   function openEdit(t) {
     setSelected(t)
-    setEditForm({ estado: t.estado, prioridad: t.prioridad, tecnicoId: t.tecnico?.id || t.tecnicoId || '' })
+    setEditForm({
+      estado: normalizeTicketValue(t.estado),
+      prioridad: normalizeTicketValue(t.prioridad),
+      tecnicoId: t.tecnico?.id || t.tecnicoId || '',
+      resolucion: t.resolucion || '',
+    })
     setShowDetail(false)
     setShowEdit(true)
   }
@@ -118,35 +203,93 @@ export default function Tickets() {
     if (Object.keys(errs).length) { setErrors(errs); return }
     setErrors({})
     try {
-      await run(ticketsService.crear({
-        descripcion: form.descripcion,
-        prioridad:   form.prioridad,
-        juzgadoId:   Number(form.juzgadoId),
-        tecnicoId:   Number(form.tecnicoId)  || undefined,
-        hardwareId:  Number(form.hardwareId) || undefined,
-      }))
+      const basePayload = {
+        descripcion: form.descripcion.trim(),
+        juzgadoId: Number(form.juzgadoId),
+      }
+
+      if (form.tecnicoId) {
+        const tecnicoId = Number(form.tecnicoId)
+        if (Number.isInteger(tecnicoId) && tecnicoId > 0) basePayload.tecnicoId = tecnicoId
+      }
+
+      if (form.hardwareId) {
+        const hardwareId = Number(form.hardwareId)
+        if (Number.isInteger(hardwareId) && hardwareId > 0) basePayload.hardwareId = hardwareId
+      }
+
+      const payload = {
+        ...basePayload,
+        categoria: form.categoria,
+        prioridad: normalizeTicketValue(form.prioridad),
+      }
+
+      await run(ticketsService.crear(payload))
+
       showToast('Ticket creado correctamente', 'success')
       setShowCreate(false)
       setForm(EMPTY_FORM)
       loadTickets()
     } catch (err) {
-      showToast(err.response?.data?.message || 'Error al crear ticket', 'error')
+      showToast(getValidationDetail(err) || getApiError(err, 'Error al crear ticket'), 'error')
     }
   }
 
   async function handleEdit(e) {
     e.preventDefault()
+    const descripcionValue = (detail?.descripcion || selected?.descripcion || '').trim()
+    const juzgadoValue = Number(detail?.juzgado?.id || detail?.juzgadoId || selected?.juzgado?.id || selected?.juzgadoId || 0)
+    const previousEstado = normalizeTicketValue(detail?.estado || selected?.estado)
+
+    if (descripcionValue.length < 10) {
+      showToast('La descripcion debe tener al menos 10 caracteres.', 'error')
+      return
+    }
+
+    if (!juzgadoValue) {
+      showToast('El ticket debe tener juzgado asignado.', 'error')
+      return
+    }
+
+    if (editForm.estado === 'cerrado' && !editForm.resolucion?.trim()) {
+      showToast('Para cerrar el ticket debes ingresar una resolucion.', 'error')
+      return
+    }
+
     try {
-      await run(ticketsService.actualizar(selected.id, {
-        estado:    editForm.estado    || undefined,
-        prioridad: editForm.prioridad || undefined,
-        tecnicoId: Number(editForm.tecnicoId) || undefined,
-      }))
+      const payload = {
+        descripcion: descripcionValue,
+        estado: editForm.estado ? normalizeTicketValue(editForm.estado) : undefined,
+        prioridad: editForm.prioridad ? normalizeTicketValue(editForm.prioridad) : undefined,
+        juzgadoId: juzgadoValue,
+      }
+
+      if (editForm.estado === 'cerrado') {
+        payload.resolucion = editForm.resolucion.trim()
+      }
+
+      if (editForm.tecnicoId) payload.tecnicoId = Number(editForm.tecnicoId)
+      const hardwareIdValue = detail?.hardware?.id || detail?.hardwareId || selected?.hardware?.id || selected?.hardwareId
+      if (hardwareIdValue) payload.hardwareId = Number(hardwareIdValue)
+
+      await run(ticketsService.actualizar(selected.id, payload))
+
+      // Deja trazabilidad explicita en bitacora al momento del cierre.
+      if (editForm.estado === 'cerrado' && previousEstado !== 'cerrado' && payload.resolucion) {
+        try {
+          await run(ticketsService.addBitacora(selected.id, {
+            texto: `Cierre de ticket. Resolucion: ${payload.resolucion}`,
+          }))
+        } catch (_) {
+          showToast('El ticket se cerro, pero no se pudo registrar la resolucion en bitacora.', 'warning')
+        }
+      }
+
       showToast('Ticket actualizado', 'success')
       setShowEdit(false)
       loadTickets()
     } catch (err) {
-      showToast(err.response?.data?.message || 'Error al actualizar', 'error')
+      showToast(getValidationDetail(err) || getApiError(err, 'Error al actualizar'), 'error')
     }
   }
 
@@ -161,7 +304,7 @@ export default function Tickets() {
       const res = await ticketsService.obtener(selected.id)
       setDetail(res.data?.data ?? res.data)
     } catch (err) {
-      showToast(err.response?.data?.message || 'Error', 'error')
+      showToast(getApiError(err, 'Error'), 'error')
     }
   }
 
@@ -184,11 +327,11 @@ export default function Tickets() {
         <SearchInput value={search} onChange={setSearch} placeholder="Buscar ticket, juzgado..." />
         <select className="filter-select" value={fEstado} onChange={e => setFEstado(e.target.value)}>
           <option value="">Todos los estados</option>
-          {ESTADOS.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+          {ESTADOS.map(s => <option key={s} value={s}>{formatEnum(s)}</option>)}
         </select>
         <select className="filter-select" value={fPrioridad} onChange={e => setFPrioridad(e.target.value)}>
           <option value="">Todas las prioridades</option>
-          {PRIORIDADES.map(p => <option key={p} value={p}>{p}</option>)}
+          {PRIORIDADES.map(p => <option key={p} value={p}>{formatEnum(p)}</option>)}
         </select>
       </div>
 
@@ -245,10 +388,20 @@ export default function Tickets() {
             placeholder="Describa el problema detalladamente..."
           />
         </FormGroup>
+        <FormGroup label="Categoria" required error={errors.categoria}>
+          <select
+            className={`form-control ${errors.categoria ? 'error' : ''}`}
+            value={form.categoria}
+            onChange={e => setForm(p => ({ ...p, categoria: e.target.value }))}
+          >
+            <option value="">Seleccionar categoria...</option>
+            {CATEGORIAS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </select>
+        </FormGroup>
         <div className="grid grid-cols-2 gap-3.5">
           <FormGroup label="Prioridad">
             <select className="form-control" value={form.prioridad} onChange={e => setForm(p => ({ ...p, prioridad: e.target.value }))}>
-              {PRIORIDADES.map(p => <option key={p} value={p}>{p}</option>)}
+              {PRIORIDADES.map(p => <option key={p} value={p}>{formatEnum(p)}</option>)}
             </select>
           </FormGroup>
           <FormGroup label="Juzgado" required error={errors.juzgadoId}>
@@ -263,11 +416,13 @@ export default function Tickets() {
               <option value="">Sin asignar</option>
               {tecnicos.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
             </select>
+            {errors.tecnicoId && <p className="text-xs text-danger mt-1">{errors.tecnicoId}</p>}
           </FormGroup>
           <FormGroup label="Hardware ID">
             <input type="number" className="form-control" value={form.hardwareId}
               onChange={e => setForm(p => ({ ...p, hardwareId: e.target.value }))}
               placeholder="ID del equipo (opcional)" />
+            {errors.hardwareId && <p className="text-xs text-danger mt-1">{errors.hardwareId}</p>}
           </FormGroup>
         </div>
       </Modal>
@@ -330,12 +485,12 @@ export default function Tickets() {
         <div className="grid grid-cols-2 gap-3.5">
           <FormGroup label="Estado">
             <select className="form-control" value={editForm.estado} onChange={e => setEditForm(p => ({ ...p, estado: e.target.value }))}>
-              {ESTADOS.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+              {ESTADOS.map(s => <option key={s} value={s}>{formatEnum(s)}</option>)}
             </select>
           </FormGroup>
           <FormGroup label="Prioridad">
             <select className="form-control" value={editForm.prioridad} onChange={e => setEditForm(p => ({ ...p, prioridad: e.target.value }))}>
-              {PRIORIDADES.map(p => <option key={p} value={p}>{p}</option>)}
+              {PRIORIDADES.map(p => <option key={p} value={p}>{formatEnum(p)}</option>)}
             </select>
           </FormGroup>
           <FormGroup label="Tecnico asignado">
@@ -345,6 +500,18 @@ export default function Tickets() {
             </select>
           </FormGroup>
         </div>
+        {editForm.estado === 'cerrado' && (
+          <FormGroup label="Resolucion" required>
+            <textarea
+              className="form-control h-auto py-2"
+              rows={3}
+              value={editForm.resolucion ?? ''}
+              onChange={e => setEditForm(p => ({ ...p, resolucion: e.target.value }))}
+              placeholder="Detalle de la resolucion aplicada..."
+              autoFocus
+            />
+          </FormGroup>
+        )}
       </Modal>
 
       {/* BITACORA */}

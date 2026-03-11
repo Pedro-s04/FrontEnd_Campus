@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import Swal from 'sweetalert2'
 import { useAuth } from '../context/AuthContext'
 
 // ── BADGE ────────────────────────────────────────────────────
@@ -102,12 +103,12 @@ export function FormGroup({ label, required, error, children }) {
 
 // ── PROTECTED ROUTE ──────────────────────────────────────────
 export function ProtectedRoute({ children, allowedRoles }) {
-  const { user, token, loading } = useAuth()
+  const { user, token, loading, hasAnyRole } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
 
   const hasSession = Boolean(token && user)
-  const hasRoleAccess = !allowedRoles || allowedRoles.includes(user?.rol)
+  const hasRoleAccess = !allowedRoles || hasAnyRole(allowedRoles)
 
   useEffect(() => {
     if (loading) return
@@ -203,26 +204,71 @@ export function setToastCallback(fn) {
 }
 
 export function showToast(message, type = 'success') {
-  if (toastCallback) toastCallback(message, type)
+  if (!message) return
+  if (toastCallback) {
+    toastCallback(message, type)
+    return
+  }
+
+  const icon = ['success', 'error', 'warning', 'info', 'question'].includes(type) ? type : 'info'
+  const iconColorMap = {
+    success: '#16a34a',
+    error: '#dc2626',
+    warning: '#d97706',
+    info: '#0891b2',
+    question: '#2563a8',
+  }
+
+  Swal.fire({
+    toast: true,
+    position: 'top-end',
+    icon,
+    title: message,
+    iconColor: iconColorMap[icon],
+    showConfirmButton: false,
+    timer: icon === 'error' ? 4200 : 3000,
+    timerProgressBar: true,
+    customClass: {
+      popup: `pj-swal-toast pj-swal-${icon}`,
+      title: 'pj-swal-title',
+      timerProgressBar: 'pj-swal-progress',
+    },
+    didOpen: (toast) => {
+      toast.addEventListener('mouseenter', Swal.stopTimer)
+      toast.addEventListener('mouseleave', Swal.resumeTimer)
+    },
+  })
+}
+
+export async function confirmDialog({
+  title = 'Confirmar accion',
+  text = 'Esta accion no se puede deshacer.',
+  confirmText = 'Confirmar',
+  cancelText = 'Cancelar',
+  icon = 'warning',
+} = {}) {
+  const result = await Swal.fire({
+    title,
+    text,
+    icon,
+    iconColor: icon === 'warning' ? '#d97706' : '#2563a8',
+    showCancelButton: true,
+    confirmButtonText: confirmText,
+    cancelButtonText: cancelText,
+    reverseButtons: true,
+    focusCancel: true,
+    customClass: {
+      popup: 'pj-swal-modal',
+      title: 'pj-swal-modal-title',
+      confirmButton: 'pj-swal-btn pj-swal-btn-confirm',
+      cancelButton: 'pj-swal-btn pj-swal-btn-cancel',
+    },
+    buttonsStyling: false,
+  })
+
+  return Boolean(result.isConfirmed)
 }
 
 export function ToastContainer({ toasts, onRemove }) {
-  return (
-    <div className="fixed bottom-6 right-6 z-[2000] flex flex-col gap-2.5">
-      {toasts.map((t) => (
-        <div
-          key={t.id}
-          className={`flex items-center gap-2.5 px-4 py-3 rounded-lg text-sm text-white min-w-[260px] shadow-xl animate-[slideUp_0.25s_ease]
-            ${t.type === 'success' ? 'bg-success' : t.type === 'error' ? 'bg-danger' : 'bg-gray-900'}`}
-        >
-          <span className="flex-1">{t.message}</span>
-          <button onClick={() => onRemove(t.id)} className="text-white/70 hover:text-white">
-            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      ))}
-    </div>
-  )
+  return null
 }

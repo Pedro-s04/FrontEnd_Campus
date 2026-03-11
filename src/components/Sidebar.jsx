@@ -83,7 +83,7 @@ function NavSection({ label, children }) {
 }
 
 export default function Sidebar() {
-  const { user, logout, isAdmin, isOperador } = useAuth()
+  const { user, logout, isAdmin, isOperador, isTecnico } = useAuth()
   const navigate = useNavigate()
 
   function handleLogout() {
@@ -120,7 +120,9 @@ export default function Sidebar() {
         </NavSection>
 
         <NavSection label="Inventario">
-          <SideNavItem to="/hardware"     icon={ICONS.hardware}   label="Hardware" />
+          {(isAdmin || isOperador) && (
+            <SideNavItem to="/hardware"   icon={ICONS.hardware}   label="Hardware" />
+          )}
           {(isAdmin || isOperador) && (
             <SideNavItem to="/software"   icon={ICONS.software}   label="Software y Licencias" />
           )}
@@ -130,13 +132,19 @@ export default function Sidebar() {
           {(isAdmin || isOperador) && (
             <SideNavItem to="/contratos"  icon={ICONS.contratos}  label="Contratos" />
           )}
-          <SideNavItem to="/organizacion" icon={ICONS.organizacion} label="Organizacion" />
+          {(isAdmin || isOperador) && (
+            <SideNavItem to="/organizacion" icon={ICONS.organizacion} label="Organizacion" />
+          )}
         </NavSection>
 
-        {isAdmin && (
+        {(isAdmin || isOperador || isTecnico) && (
           <NavSection label="Administracion">
-            <SideNavItem to="/usuarios"   icon={ICONS.usuarios}   label="Usuarios" />
-            <SideNavItem to="/dashboard"  icon={ICONS.dashboard}  label="Dashboard" />
+            {isAdmin && (
+              <SideNavItem to="/usuarios"   icon={ICONS.usuarios}   label="Usuarios" />
+            )}
+            {(isAdmin || isOperador || isTecnico) && (
+              <SideNavItem to="/dashboard"  icon={ICONS.dashboard}  label="Dashboard" />
+            )}
           </NavSection>
         )}
       </nav>

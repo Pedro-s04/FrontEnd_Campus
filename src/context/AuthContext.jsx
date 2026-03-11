@@ -2,6 +2,14 @@ import { createContext, useContext, useState, useEffect } from 'react'
 
 const AuthContext = createContext(null)
 
+function normalizeRole(value) {
+  return (value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/^ROLE_/i, '')
+    .toUpperCase()
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser]   = useState(null)
   const [token, setToken] = useState(null)
@@ -32,12 +40,17 @@ export function AuthProvider({ children }) {
   }
 
   const rol = user?.rol || ''
-  const isAdmin    = rol === 'ADMINISTRADOR'
-  const isOperador = rol === 'OPERADOR'
-  const isTecnico  = rol === 'TECNICO'
+  const rolNormalized = normalizeRole(rol)
+  const isAdmin    = rolNormalized === 'ADMINISTRADOR'
+  const isOperador = rolNormalized === 'OPERADOR'
+  const isTecnico  = rolNormalized === 'TECNICO'
+
+  function hasAnyRole(roles = []) {
+    return roles.map(normalizeRole).includes(rolNormalized)
+  }
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout, rol, isAdmin, isOperador, isTecnico }}>
+    <AuthContext.Provider value={{ user, token, loading, login, logout, rol, rolNormalized, isAdmin, isOperador, isTecnico, hasAnyRole }}>
       {children}
     </AuthContext.Provider>
   )

@@ -1,16 +1,67 @@
 import { useEffect, useState } from 'react'
-import { contratosService } from '../services'
+import { contratosService, usuariosService } from '../services'
 import { useAsync } from '../hooks/useAsync'
 import { useAuth } from '../context/AuthContext'
 import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast } from '../components'
 
-const EMPTY_FORM = { proveedor: '', cobertura: '', fechaInicio: '', fechaVencimiento: '', responsableId: '' }
+const ESTADOS_CONTRATO = ['vigente', 'por_vencer', 'vencido', 'pendiente_renovacion']
+const EMPTY_FORM = { proveedor: '', cobertura: '', detalle: '', fechaInicio: '', fechaVencimiento: '', montoAnual: '', responsableId: '' }
+const formatEnum = (value) => (value || '').toLowerCase().replace(/_/g, ' ')
+const getApiError = (err, fallback) => err.response?.data?.error?.message || err.response?.data?.message || fallback
+const normalize = (value) =>
+  (value || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+
+const normalizeEstado = (value) => normalize(value).replace(/\s+/g, '_')
+const normalizeRole = (value) => normalize(value).replace(/^role_/, '').toUpperCase()
 
 function validate(form) {
   const e = {}
   if (!form.proveedor.trim())     e.proveedor        = 'El proveedor es obligatorio.'
+  if (!form.cobertura.trim())     e.cobertura        = 'La cobertura es obligatoria.'
   if (!form.fechaVencimiento)     e.fechaVencimiento = 'La fecha de vencimiento es obligatoria.'
   return e
+}
+
+function toFormValues(item) {
+  if (!item) return EMPTY_FORM
+  return {
+    proveedor: item.proveedor || '',
+    cobertura: item.cobertura || '',
+    detalle: item.detalle || '',
+    fechaInicio: item.fechaInicio || '',
+    fechaVencimiento: item.fechaVencimiento || '',
+    montoAnual: item.montoAnual ?? '',
+    responsableId: item.responsable?.id || item.responsableId || '',
+  }
+}
+
+function buildPayload(form) {
+  return {
+    proveedor: form.proveedor.trim(),
+    cobertura: form.cobertura.trim(),
+    detalle: form.detalle?.trim() || undefined,
+    fechaInicio: form.fechaInicio || undefined,
+    fechaVencimiento: form.fechaVencimiento || undefined,
+    montoAnual: form.montoAnual ? Number(form.montoAnual) : undefined,
+    responsableId: Number(form.responsableId) || undefined,
+  }
+}
+
+function resolveResponsableNombre(item, responsables) {
+  if (!item) return '-'
+  if (item.responsable?.nombre) return item.responsable.nombre
+  if (item.responsableNombre) return item.responsableNombre
+
+  const rid = item.responsable?.id || item.responsableId
+  if (!rid) return '-'
+
+  const responsable = responsables.find((u) => String(u.id) === String(rid))
+  return responsable?.nombre || `ID ${rid}`
 }
 
 export default function Contratos() {
@@ -20,23 +71,56 @@ export default function Contratos() {
   const [items,      setItems]      = useState([])
   const [loading,    setLoading]    = useState(true)
   const [search,     setSearch]     = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [fEstado,    setFEstado]    = useState('')
   const [showCreate, setShowCreate] = useState(false)
+  const [editingId,  setEditingId]  = useState(null)
+  const [responsables, setResponsables] = useState([])
   const [selected,   setSelected]   = useState(null)
+  const [detailLoad, setDetailLoad] = useState(false)
   const [showDetail, setShowDetail] = useState(false)
   const [form,       setForm]       = useState(EMPTY_FORM)
   const [errors,     setErrors]     = useState({})
 
+  useEffect(() => {
+    const timeoutId = setTimeout(() => setDebouncedSearch(search.trim()), 300)
+    return () => clearTimeout(timeoutId)
+  }, [search])
+
   async function load() {
     setLoading(true)
     try {
-      const res = await contratosService.listar({ search, page: 0, size: 50 })
+      const params = { page: 0, size: 50 }
+      if (debouncedSearch) params.search = debouncedSearch
+
+      const res = await contratosService.listar(params)
       const d = res.data?.data
       setItems(Array.isArray(d) ? d : d?.content ?? [])
-    } catch (_) {}
+    } catch (err) {
+      showToast(getApiError(err, 'Error al cargar contratos'), 'error')
+      setItems([])
+    }
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [search])
+  useEffect(() => { load() }, [debouncedSearch, fEstado])
+
+  useEffect(() => {
+    usuariosService
+      .listar({ activo: true, page: 0, size: 200 })
+      .then((res) => {
+        const d = res.data?.data
+        const list = Array.isArray(d) ? d : d?.content ?? []
+        const operadores = list.filter((u) => {
+          const rol = u?.rol?.nombre || u?.rol || u?.rolNombre || u?.role
+          return normalizeRole(rol) === 'OPERADOR'
+        })
+        setResponsables(operadores)
+      })
+      .catch(() => {
+        setResponsables([])
+      })
+  }, [])
 
   async function handleCreate(e) {
     e.preventDefault()
@@ -44,25 +128,50 @@ export default function Contratos() {
     if (Object.keys(errs).length) { setErrors(errs); return }
     setErrors({})
     try {
-      await run(contratosService.crear({
-        proveedor:        form.proveedor,
-        cobertura:        form.cobertura || undefined,
-        fechaInicio:      form.fechaInicio || undefined,
-        fechaVencimiento: form.fechaVencimiento,
-        responsableId:    Number(form.responsableId) || undefined,
-      }))
-      showToast('Contrato creado correctamente', 'success')
+      const payload = buildPayload(form)
+      if (editingId) {
+        await run(contratosService.actualizar(editingId, payload))
+        showToast('Contrato actualizado correctamente', 'success')
+      } else {
+        await run(contratosService.crear(payload))
+        showToast('Contrato creado correctamente', 'success')
+      }
       setShowCreate(false)
+      setEditingId(null)
       setForm(EMPTY_FORM)
       load()
     } catch (err) {
-      showToast(err.response?.data?.message || 'Error al crear contrato', 'error')
+      showToast(getApiError(err, editingId ? 'Error al actualizar contrato' : 'Error al crear contrato'), 'error')
     }
   }
 
+  function openCreateModal() {
+    setErrors({})
+    setEditingId(null)
+    setForm(EMPTY_FORM)
+    setShowCreate(true)
+  }
+
+  async function openEditModal(item) {
+    setErrors({})
+    setEditingId(item.id)
+    setForm(toFormValues(item))
+    setShowCreate(true)
+  }
+
   async function openDetail(c) {
-    setSelected(c)
+    setDetailLoad(true)
+    setSelected(null)
     setShowDetail(true)
+    try {
+      const res = await contratosService.obtener(c.id)
+      setSelected(res.data?.data ?? c)
+    } catch (err) {
+      showToast(getApiError(err, 'Error al cargar el detalle del contrato'), 'error')
+      setSelected(c)
+    } finally {
+      setDetailLoad(false)
+    }
   }
 
   const daysUntil = (dateStr) => {
@@ -71,13 +180,29 @@ export default function Contratos() {
     return diff
   }
 
+  const visibleItems = items.filter((item) => {
+    const query = normalize(debouncedSearch)
+    const text = [
+      item.proveedor,
+      item.cobertura,
+      item.detalle,
+      item.responsable?.nombre,
+    ].map(normalize).join(' ')
+
+    const estadoItem = normalizeEstado(item.estadoContrato)
+    const matchesSearch = !query || text.includes(query)
+    const matchesEstado = !fEstado || estadoItem === fEstado
+
+    return matchesSearch && matchesEstado
+  })
+
   return (
     <div>
       <PageHeader
         title="Contratos"
         subtitle="Gestion de contratos con proveedores"
         action={isAdmin && (
-          <button className="btn btn-primary" onClick={() => { setForm(EMPTY_FORM); setErrors({}); setShowCreate(true) }}>
+          <button className="btn btn-primary" onClick={openCreateModal}>
             <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path d="M5 12h14"/><path d="M12 5v14"/>
             </svg>
@@ -88,15 +213,19 @@ export default function Contratos() {
 
       <div className="flex gap-2.5 mb-3.5">
         <SearchInput value={search} onChange={setSearch} placeholder="Buscar proveedor, cobertura..." />
+        <select className="filter-select" value={fEstado} onChange={e => setFEstado(e.target.value)}>
+          <option value="">Todos los estados</option>
+          {ESTADOS_CONTRATO.map(s => <option key={s} value={s}>{formatEnum(s)}</option>)}
+        </select>
       </div>
 
       {loading ? (
         <div className="flex justify-center py-16"><Spinner size={8} /></div>
-      ) : items.length === 0 ? (
+      ) : visibleItems.length === 0 ? (
         <EmptyState title="Sin contratos" text="No se encontraron contratos registrados." />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-          {items.map(c => {
+          {visibleItems.map(c => {
             const days = daysUntil(c.fechaVencimiento)
             const warn = days !== null && days <= 90 && days >= 0
             return (
@@ -135,11 +264,11 @@ export default function Contratos() {
       )}
 
       {/* CREATE */}
-      <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Nuevo Contrato"
+      <Modal open={showCreate} onClose={() => { setShowCreate(false); setEditingId(null) }} title={editingId ? `Editar Contrato #${editingId}` : 'Nuevo Contrato'}
         footer={<>
-          <button className="btn btn-secondary" onClick={() => setShowCreate(false)}>Cancelar</button>
+          <button className="btn btn-secondary" onClick={() => { setShowCreate(false); setEditingId(null) }}>Cancelar</button>
           <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>
-            {saving ? <Spinner size={4} /> : 'Crear contrato'}
+            {saving ? <Spinner size={4} /> : editingId ? 'Guardar cambios' : 'Crear contrato'}
           </button>
         </>}
       >
@@ -148,10 +277,15 @@ export default function Contratos() {
             onChange={e => setForm(p => ({ ...p, proveedor: e.target.value }))}
             placeholder="Nombre del proveedor" />
         </FormGroup>
-        <FormGroup label="Descripcion de cobertura">
-          <input className="form-control" value={form.cobertura}
+        <FormGroup label="Descripcion de cobertura" required error={errors.cobertura}>
+          <input className={`form-control ${errors.cobertura ? 'error' : ''}`} value={form.cobertura}
             onChange={e => setForm(p => ({ ...p, cobertura: e.target.value }))}
             placeholder="Ej: Soporte tecnico nivel 2, hardware" />
+        </FormGroup>
+        <FormGroup label="Detalle">
+          <input className="form-control" value={form.detalle}
+            onChange={e => setForm(p => ({ ...p, detalle: e.target.value }))}
+            placeholder="Notas o alcance del contrato" />
         </FormGroup>
         <div className="grid grid-cols-2 gap-3.5">
           <FormGroup label="Fecha de inicio">
@@ -164,20 +298,64 @@ export default function Contratos() {
               onChange={e => setForm(p => ({ ...p, fechaVencimiento: e.target.value }))} />
           </FormGroup>
         </div>
+        <FormGroup label="Monto anual">
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            className="form-control"
+            value={form.montoAnual}
+            onChange={e => setForm(p => ({ ...p, montoAnual: e.target.value }))}
+            placeholder="Ej: 1500000"
+          />
+        </FormGroup>
+        <FormGroup label="Responsable">
+          <select
+            className="form-control"
+            value={form.responsableId}
+            onChange={e => setForm(p => ({ ...p, responsableId: e.target.value }))}
+          >
+            <option value="">Sin responsable</option>
+            {responsables.map((u) => (
+              <option key={u.id} value={u.id}>{u.nombre}</option>
+            ))}
+          </select>
+        </FormGroup>
       </Modal>
 
       {/* DETAIL */}
-      <Modal open={showDetail} onClose={() => setShowDetail(false)} title={`Contrato #${selected?.id}`}>
-        {selected && (
+      <Modal
+        open={showDetail}
+        onClose={() => setShowDetail(false)}
+        title={`Contrato #${selected?.id}`}
+        footer={isAdmin && selected && !detailLoad ? (
+          <>
+            <button className="btn btn-secondary" onClick={() => setShowDetail(false)}>Cerrar</button>
+            <button
+              className="btn btn-primary"
+              onClick={async () => {
+                setShowDetail(false)
+                await openEditModal(selected)
+              }}
+            >
+              Editar contrato
+            </button>
+          </>
+        ) : null}
+      >
+        {detailLoad ? (
+          <div className="flex justify-center py-10"><Spinner size={8} /></div>
+        ) : selected && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-x-6 gap-y-4">
               {[
                 ['Proveedor',   selected.proveedor],
                 ['Estado',      <Badge value={selected.estadoContrato} />],
                 ['Cobertura',   selected.cobertura || '-'],
-                ['Responsable', selected.responsable?.nombre || '-'],
+                ['Responsable', resolveResponsableNombre(selected, responsables)],
                 ['Inicio',      selected.fechaInicio || '-'],
                 ['Vencimiento', selected.fechaVencimiento || '-'],
+                ['Monto anual', selected.montoAnual ?? '-'],
               ].map(([label, value], i) => (
                 <div key={i}>
                   <div className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-1">{label}</div>
