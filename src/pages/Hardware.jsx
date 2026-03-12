@@ -2,19 +2,55 @@ import { useEffect, useMemo, useState } from 'react'
 import { hardwareService, organizacionService } from '../services'
 import { useAsync } from '../hooks/useAsync'
 import { useAuth } from '../context/AuthContext'
-import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast } from '../components'
+import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast, confirmDialog } from '../components'
 
 const ESTADOS = ['', 'operativo', 'en_reparacion', 'en_deposito', 'baja']
+const HARDWARE_TYPES = [
+  { id: 1, nombre: 'PC' },
+  { id: 2, nombre: 'Notebook' },
+  { id: 3, nombre: 'Monitor' },
+  { id: 4, nombre: 'Impresora' },
+  { id: 5, nombre: 'Router / Switch' },
+  { id: 6, nombre: 'UPS' },
+  { id: 7, nombre: 'Servidor' },
+  { id: 8, nombre: 'Otro' },
+]
 const formatEnum = (value) => (value || '').toLowerCase().replace('_', ' ')
 const normalizeHardwareValue = (value) => (value || '').toLowerCase()
 const getApiError = (err, fallback) => err.response?.data?.error?.message || err.response?.data?.message || fallback
 const getValidationDetail = (err) => err.response?.data?.error?.details?.[0]?.message
+
+const normalize = (value) =>
+  (value || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+
+const HARDWARE_TYPE_BY_ID = Object.fromEntries(HARDWARE_TYPES.map((t) => [String(t.id), t.nombre]))
+const HARDWARE_TYPE_ID_BY_NAME = Object.fromEntries(HARDWARE_TYPES.map((t) => [normalize(t.nombre), t.id]))
 
 function toBackendEstado(value) {
   const normalized = normalizeHardwareValue(value)
   if (normalized === 'deposito') return 'en_deposito'
   if (normalized === 'de_baja') return 'baja'
   return normalized
+}
+
+function getHardwareTypeId(item) {
+  const directId = item?.tipoId ?? item?.tipo?.id ?? item?.hardwareTipoId
+  if (directId) return Number(directId)
+
+  const nombre = item?.tipo?.nombre || item?.tipoNombre || item?.tipoHardware || item?.tipo
+  if (!nombre) return null
+  return HARDWARE_TYPE_ID_BY_NAME[normalize(nombre)] || null
+}
+
+function getHardwareTypeLabel(item) {
+  const typeId = getHardwareTypeId(item)
+  if (typeId && HARDWARE_TYPE_BY_ID[String(typeId)]) return HARDWARE_TYPE_BY_ID[String(typeId)]
+  return item?.tipo?.nombre || item?.tipoNombre || '-'
 }
 
 function validateCreate(form) {
@@ -36,6 +72,7 @@ export default function Hardware() {
   const [search,   setSearch]   = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [fEstado,  setFEstado]  = useState('')
+  const [fTipoId, setFTipoId] = useState('')
   const [fJuzgadoId, setFJuzgadoId] = useState('')
   const [selected, setSelected] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
@@ -63,6 +100,7 @@ export default function Hardware() {
     try {
       const params = { page: 0, size: 50 }
       if (ESTADOS.includes(fEstado) && fEstado) params.estado = fEstado
+      if (fTipoId) params.tipoId = Number(fTipoId)
       if (debouncedSearch) params.search = debouncedSearch
       if (fJuzgadoId) params.juzgadoId = Number(fJuzgadoId)
 
@@ -77,7 +115,7 @@ export default function Hardware() {
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [fEstado, debouncedSearch, fJuzgadoId])
+  useEffect(() => { load() }, [fEstado, fTipoId, debouncedSearch, fJuzgadoId])
 
   useEffect(() => {
     organizacionService.listarJuzgados().then(r => setJuzgados(r.data?.data ?? []))
@@ -87,7 +125,7 @@ export default function Hardware() {
     setSelected(item)
     setForm({
       marca: item.marca || '', modelo: item.modelo || '',
-      numeroSerie: item.numeroSerie || '', tipoId: item.tipoId || 1,
+      numeroSerie: item.numeroSerie || '', tipoId: getHardwareTypeId(item) || 1,
       juzgadoId: item.juzgado?.id || item.juzgadoId || '',
       estado: toBackendEstado(item.estado || 'operativo'), observaciones: item.observaciones || ''
     })
@@ -129,6 +167,16 @@ export default function Hardware() {
 
   async function handleEdit(e) {
     e.preventDefault()
+
+    const confirmed = await confirmDialog({
+      title: 'Confirmar cambios',
+      text: 'Se actualizara la informacion del equipo.',
+      confirmText: 'Si, guardar',
+      cancelText: 'Cancelar',
+      icon: 'warning',
+    })
+    if (!confirmed) return
+
     try {
       const basePayload = {
         observaciones: form.observaciones?.trim() || undefined,
@@ -154,19 +202,24 @@ export default function Hardware() {
     return items.filter((item) => {
       const estadoItem = toBackendEstado(item.estado)
       const juzgadoIdItem = String(item.juzgado?.id || item.juzgadoId || '')
+      const tipoIdItem = getHardwareTypeId(item)
+      const tipoLabel = getHardwareTypeLabel(item)
 
       const matchEstado = !fEstado || estadoItem === fEstado
+      const matchTipo = !fTipoId || String(tipoIdItem || '') === String(fTipoId)
       const selectedJuzgadoName = juzgadoNameById[String(fJuzgadoId)] || ''
       const itemJuzgadoName = item.juzgado?.nombre || item.juzgadoNombre || ''
       const matchJuzgado = !fJuzgadoId
         || juzgadoIdItem === String(fJuzgadoId)
         || (selectedJuzgadoName && itemJuzgadoName && itemJuzgadoName === selectedJuzgadoName)
-      const searchable = `${item.marca || ''} ${item.modelo || ''} ${item.numeroSerie || ''} ${item.numeroInventario || ''} ${item.juzgadoNombre || ''} ${juzgadoNameById[String(item.juzgadoId)] || ''}`.toLowerCase()
+      const searchable = `${item.marca || ''} ${item.modelo || ''} ${item.numeroSerie || ''} ${item.numeroInventario || ''} ${item.juzgadoNombre || ''} ${juzgadoNameById[String(item.juzgadoId)] || ''} ${tipoLabel}`.toLowerCase()
       const matchSearch = !searchTerm || searchable.includes(searchTerm)
 
-      return matchEstado && matchJuzgado && matchSearch
+      return matchEstado && matchTipo && matchJuzgado && matchSearch
     })
-  }, [items, fEstado, fJuzgadoId, debouncedSearch, juzgadoNameById])
+  }, [items, fEstado, fTipoId, fJuzgadoId, debouncedSearch, juzgadoNameById])
+
+  const columnCount = canWrite ? 8 : 7
 
   return (
     <div>
@@ -189,6 +242,10 @@ export default function Hardware() {
           <option value="">Todos los estados</option>
           {ESTADOS.filter(Boolean).map(s => <option key={s} value={s}>{formatEnum(s)}</option>)}
         </select>
+        <select className="filter-select" value={fTipoId} onChange={e => setFTipoId(e.target.value)}>
+          <option value="">Todos los tipos</option>
+          {HARDWARE_TYPES.map((t) => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+        </select>
         <select className="filter-select" value={fJuzgadoId} onChange={e => setFJuzgadoId(e.target.value)}>
           <option value="">Todos los juzgados</option>
           {juzgados.map(j => <option key={j.id} value={j.id}>{j.nombre}</option>)}
@@ -203,6 +260,7 @@ export default function Hardware() {
                 <th className="th">ID</th>
                 <th className="th">Marca / Modelo</th>
                 <th className="th">N. de Serie</th>
+                <th className="th">Tipo</th>
                 <th className="th">Estado</th>
                 <th className="th">Juzgado</th>
                 <th className="th">Observaciones</th>
@@ -211,9 +269,9 @@ export default function Hardware() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} className="td text-center py-12"><Spinner /></td></tr>
+                <tr><td colSpan={columnCount} className="td text-center py-12"><Spinner /></td></tr>
               ) : visibleItems.length === 0 ? (
-                <tr><td colSpan={7}><EmptyState title="Sin equipos" text="No se encontraron equipos." /></td></tr>
+                <tr><td colSpan={columnCount}><EmptyState title="Sin equipos" text="No se encontraron equipos." /></td></tr>
               ) : visibleItems.map(item => (
                 <tr key={item.id} className="tr-body">
                   <td className="td font-mono text-xs text-gray-500">{item.id}</td>
@@ -221,12 +279,13 @@ export default function Hardware() {
                     <div className="font-medium text-gray-800">{item.marca} {item.modelo}</div>
                   </td>
                   <td className="td font-mono text-xs text-gray-500">{item.numeroSerie}</td>
+                  <td className="td text-sm text-gray-600">{getHardwareTypeLabel(item)}</td>
                   <td className="td"><Badge value={item.estado} /></td>
                   <td className="td text-sm text-gray-500">{item.juzgado?.nombre || item.juzgadoNombre || juzgadoNameById[String(item.juzgadoId)] || '-'}</td>
                   <td className="td text-xs text-gray-400 max-w-[180px] truncate">{item.observaciones || '-'}</td>
                   {canWrite && (
                     <td className="td">
-                      <button className="btn btn-ghost btn-sm" onClick={() => openEdit(item)}>Editar</button>
+                      <button className="btn btn-edit btn-sm" onClick={() => openEdit(item)}>Editar</button>
                     </td>
                   )}
                 </tr>
@@ -256,8 +315,11 @@ export default function Hardware() {
               <input className={`form-control ${errors.numeroSerie ? 'error' : ''}`} value={form.numeroSerie} onChange={e => setForm(p => ({...p, numeroSerie: e.target.value}))} />
               {errors.numeroSerie && <p className="text-xs text-danger mt-1">{errors.numeroSerie}</p>}
             </FormGroup>
-            <FormGroup label="Tipo ID">
-              <input type="number" className={`form-control ${errors.tipoId ? 'error' : ''}`} value={form.tipoId} onChange={e => setForm(p => ({...p, tipoId: e.target.value}))} min="1" />
+            <FormGroup label="Tipo de hardware" required>
+              <select className={`form-control ${errors.tipoId ? 'error' : ''}`} value={form.tipoId} onChange={e => setForm(p => ({...p, tipoId: e.target.value}))}>
+                <option value="">Seleccionar tipo...</option>
+                {HARDWARE_TYPES.map((t) => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+              </select>
               {errors.tipoId && <p className="text-xs text-danger mt-1">{errors.tipoId}</p>}
             </FormGroup>
             <FormGroup label="Juzgado">

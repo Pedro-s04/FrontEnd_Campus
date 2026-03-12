@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
-import { ticketsService, organizacionService, usuariosService } from '../services'
+import { useEffect, useMemo, useState } from 'react'
+import { ticketsService, organizacionService, usuariosService, hardwareService } from '../services'
 import { useAsync } from '../hooks/useAsync'
 import { useAuth } from '../context/AuthContext'
-import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast } from '../components'
+import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast, confirmDialog } from '../components'
 
 const ESTADOS     = ['solicitado', 'asignado', 'en_curso', 'cerrado']
 const PRIORIDADES = ['alta', 'media', 'baja']
@@ -21,6 +21,14 @@ const formatEnum = (value) => (value || '').toLowerCase().replace('_', ' ')
 const getApiError = (err, fallback) => err.response?.data?.error?.message || err.response?.data?.message || fallback
 const getValidationDetail = (err) => err.response?.data?.error?.details?.[0]?.message
 
+const normalizeText = (value) =>
+  (value || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+
 function normalizeRole(value) {
   return (value || '')
     .toString()
@@ -38,7 +46,15 @@ function onlyActiveTecnicos(list = []) {
   })
 }
 
-function validate(form) {
+function getUserJuzgadoId(user) {
+  return user?.juzgado?.id ?? user?.juzgadoId ?? user?.idJuzgado ?? ''
+}
+
+function getUserJuzgadoNombre(user) {
+  return normalizeText(user?.juzgado?.nombre || user?.juzgadoNombre || '')
+}
+
+function validate(form, hardwareQuery = '') {
   const e = {}
   if (!form.descripcion.trim())            e.descripcion = 'La descripcion es obligatoria.'
   else if (form.descripcion.trim().length < 10) e.descripcion = 'Minimo 10 caracteres.'
@@ -59,7 +75,42 @@ function validate(form) {
     }
   }
 
+  if (hardwareQuery.trim() && !form.hardwareId) {
+    e.hardwareId = 'Seleccione un equipo valido de la lista.'
+  }
+
   return e
+}
+
+function isHardwareBaja(item) {
+  const estado = normalizeTicketValue(item?.estado)
+  return estado === 'baja' || estado === 'de_baja'
+}
+
+function getHardwareTipo(item) {
+  return normalizeText(item?.tipo?.nombre || item?.tipoNombre || item?.tipoHardware || item?.tipo)
+}
+
+function categoryByHardware(item) {
+  const tipo = getHardwareTipo(item)
+  if (['pc', 'notebook', 'monitor', 'pantalla'].some((v) => tipo.includes(v))) return 'hardware_pc'
+  if (tipo.includes('impresora')) return 'hardware_impresora'
+  if (tipo.includes('router') || tipo.includes('switch') || tipo.includes('red')) return 'hardware_red'
+  return ''
+}
+
+function toHardwareOption(item) {
+  const marcaModelo = [item?.marca, item?.modelo].filter(Boolean).join(' ')
+  const serie = item?.numeroSerie ? `Serie: ${item.numeroSerie}` : ''
+  const tipoRaw = item?.tipo?.nombre || item?.tipoNombre || item?.tipoHardware || item?.tipo || 'Sin tipo'
+  const tipo = tipoRaw ? `Tipo: ${tipoRaw}` : ''
+  const nombre = item?.nombre || marcaModelo
+  const display = [nombre || `Equipo #${item.id}`, tipo, serie].filter(Boolean).join(' - ')
+  return {
+    id: item.id,
+    item,
+    display,
+  }
 }
 
 function BitacoraTimeline({ entries }) {
@@ -95,9 +146,43 @@ function StatusFlow({ estado }) {
   )
 }
 
+function PriorityBadge({ value }) {
+  const normalized = normalizeTicketValue(value).trim()
+
+  const palette = {
+    alta: {
+      chip: 'bg-gradient-to-r from-red-500 to-red-600 text-white ring-1 ring-red-300/70 shadow-sm shadow-red-200/70',
+      dot: 'bg-white/90',
+      label: 'Alta',
+    },
+    media: {
+      chip: 'bg-gradient-to-r from-amber-50 to-amber-100 text-amber-800 ring-1 ring-amber-200 shadow-sm shadow-amber-100',
+      dot: 'bg-amber-500',
+      label: 'Media',
+    },
+    baja: {
+      chip: 'bg-gradient-to-r from-slate-50 to-slate-100 text-slate-600 ring-1 ring-slate-200 shadow-sm shadow-slate-100',
+      dot: 'bg-slate-400',
+      label: 'Baja',
+    },
+  }[normalized] || {
+    chip: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200',
+    dot: 'bg-slate-400',
+    label: value || '-',
+  }
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold tracking-wide whitespace-nowrap ${palette.chip}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${palette.dot}`} />
+      {palette.label}
+    </span>
+  )
+}
+
 export default function Tickets() {
   const { user, isAdmin, isOperador, isTecnico } = useAuth()
   const canWrite = isAdmin || isOperador
+  const canAddBitacora = isAdmin || isOperador || isTecnico
   const { run, loading: saving } = useAsync()
 
   const [tickets,    setTickets]    = useState([])
@@ -119,6 +204,20 @@ export default function Tickets() {
   const [editForm, setEditForm] = useState({ estado: '', prioridad: '', tecnicoId: '', resolucion: '' })
   const [juzgados, setJuzgados] = useState([])
   const [tecnicos, setTecnicos] = useState([])
+  const [tecnicosDisponibles, setTecnicosDisponibles] = useState([])
+  const [usingFallbackAllTecnicos, setUsingFallbackAllTecnicos] = useState(false)
+  const [hardwareItems, setHardwareItems] = useState([])
+  const [hardwareQuery, setHardwareQuery] = useState('')
+
+  const hardwareOptions = useMemo(
+    () => hardwareItems.map(toHardwareOption),
+    [hardwareItems]
+  )
+
+  useEffect(() => {
+    setTecnicosDisponibles(tecnicos)
+    setUsingFallbackAllTecnicos(false)
+  }, [tecnicos])
 
   useEffect(() => {
     const timeoutId = setTimeout(() => setDebouncedSearch(search.trim()), 300)
@@ -171,7 +270,77 @@ export default function Tickets() {
         setTecnicos(onlyActiveTecnicos(list))
       })
       .catch(err => showToast(getApiError(err, 'No se pudieron cargar tecnicos'), 'error'))
+
+    hardwareService
+      .listar({ page: 0, size: 500 })
+      .then(r => {
+        const d = r.data?.data
+        const list = Array.isArray(d) ? d : d?.content ?? []
+        setHardwareItems((list || []).filter((h) => !isHardwareBaja(h)))
+      })
+      .catch(err => {
+        showToast(getApiError(err, 'No se pudo cargar el hardware disponible'), 'error')
+        setHardwareItems([])
+      })
   }, [canWrite])
+
+  useEffect(() => {
+    if (!canWrite) return
+
+    if (!form.juzgadoId) {
+      setTecnicosDisponibles(tecnicos)
+      setUsingFallbackAllTecnicos(false)
+      return
+    }
+
+    usuariosService
+      .listar({ rol: 'TECNICO', activo: true, juzgadoId: Number(form.juzgadoId), size: 100 })
+      .then((r) => {
+        const d = r.data?.data
+        const list = Array.isArray(d) ? d : d?.content ?? []
+        const filtrados = onlyActiveTecnicos(list)
+
+        const juzgadoSeleccionado = juzgados.find((j) => String(j.id) === String(form.juzgadoId))
+        const juzgadoNombreSel = normalizeText(juzgadoSeleccionado?.nombre)
+
+        const delJuzgado = filtrados.filter((t) => {
+          const byId = String(getUserJuzgadoId(t)) === String(form.juzgadoId)
+          const byName = juzgadoNombreSel && getUserJuzgadoNombre(t) === juzgadoNombreSel
+          return Boolean(byId || byName)
+        })
+
+        if (delJuzgado.length > 0) {
+          setTecnicosDisponibles(delJuzgado)
+          setUsingFallbackAllTecnicos(false)
+          return
+        }
+
+        setTecnicosDisponibles(tecnicos)
+        setUsingFallbackAllTecnicos(true)
+      })
+      .catch(() => {
+        setTecnicosDisponibles(tecnicos)
+        setUsingFallbackAllTecnicos(false)
+      })
+  }, [canWrite, form.juzgadoId, tecnicos, juzgados])
+
+  function onHardwareInputChange(rawValue) {
+    const value = rawValue || ''
+    setHardwareQuery(value)
+
+    const selectedOption = hardwareOptions.find((opt) => opt.display === value)
+    if (!selectedOption) {
+      setForm((p) => ({ ...p, hardwareId: '' }))
+      return
+    }
+
+    const autoCategoria = categoryByHardware(selectedOption.item)
+    setForm((p) => ({
+      ...p,
+      hardwareId: String(selectedOption.id),
+      categoria: autoCategoria || p.categoria,
+    }))
+  }
 
   async function openDetail(t) {
     setSelected(t)
@@ -199,7 +368,7 @@ export default function Tickets() {
 
   async function handleCreate(e) {
     e.preventDefault()
-    const errs = validate(form)
+    const errs = validate(form, hardwareQuery)
     if (Object.keys(errs).length) { setErrors(errs); return }
     setErrors({})
     try {
@@ -255,6 +424,15 @@ export default function Tickets() {
       showToast('Para cerrar el ticket debes ingresar una resolucion.', 'error')
       return
     }
+
+    const confirmed = await confirmDialog({
+      title: 'Confirmar cambios',
+      text: 'Se actualizara la informacion del ticket.',
+      confirmText: 'Si, guardar',
+      cancelText: 'Cancelar',
+      icon: 'warning',
+    })
+    if (!confirmed) return
 
     try {
       const payload = {
@@ -314,7 +492,7 @@ export default function Tickets() {
         title="Tickets de Soporte"
         subtitle="Gestion y seguimiento de incidencias tecnicas"
         action={canWrite && (
-          <button className="btn btn-primary" onClick={() => { setForm(EMPTY_FORM); setErrors({}); setShowCreate(true) }}>
+          <button className="btn btn-primary" onClick={() => { setForm(EMPTY_FORM); setErrors({}); setHardwareQuery(''); setShowCreate(true) }}>
             <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path d="M5 12h14"/><path d="M12 5v14"/>
             </svg>
@@ -361,7 +539,7 @@ export default function Tickets() {
                     <div className="text-xs text-gray-400 mt-0.5">{t.juzgadoNombre || t.juzgado?.nombre}</div>
                   </td>
                   <td className="td"><Badge value={t.estado} /></td>
-                  <td className="td"><Badge value={t.prioridad} /></td>
+                  <td className="td"><PriorityBadge value={t.prioridad} /></td>
                   <td className="td text-sm text-gray-500">{t.tecnicoNombre || t.tecnico?.nombre || '-'}</td>
                   <td className="td font-mono text-xs text-gray-400">{t.createdAt?.slice(0,10)}</td>
                 </tr>
@@ -406,7 +584,11 @@ export default function Tickets() {
           </FormGroup>
           <FormGroup label="Juzgado" required error={errors.juzgadoId}>
             <select className={`form-control ${errors.juzgadoId ? 'error' : ''}`}
-              value={form.juzgadoId} onChange={e => setForm(p => ({ ...p, juzgadoId: e.target.value }))}>
+              value={form.juzgadoId}
+              onChange={e => {
+                const juzgadoId = e.target.value
+                setForm(p => ({ ...p, juzgadoId, tecnicoId: '' }))
+              }}>
               <option value="">Seleccionar juzgado...</option>
               {juzgados.map(j => <option key={j.id} value={j.id}>{j.nombre}</option>)}
             </select>
@@ -414,14 +596,26 @@ export default function Tickets() {
           <FormGroup label="Tecnico asignado">
             <select className="form-control" value={form.tecnicoId} onChange={e => setForm(p => ({ ...p, tecnicoId: e.target.value }))}>
               <option value="">Sin asignar</option>
-              {tecnicos.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+              {tecnicosDisponibles.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
             </select>
+            {form.juzgadoId && usingFallbackAllTecnicos && (
+              <p className="text-xs text-amber-700 mt-1">No hay tecnicos asignados a este juzgado. Se muestran todos los tecnicos disponibles.</p>
+            )}
             {errors.tecnicoId && <p className="text-xs text-danger mt-1">{errors.tecnicoId}</p>}
           </FormGroup>
-          <FormGroup label="Hardware ID">
-            <input type="number" className="form-control" value={form.hardwareId}
-              onChange={e => setForm(p => ({ ...p, hardwareId: e.target.value }))}
-              placeholder="ID del equipo (opcional)" />
+          <FormGroup label="Hardware asociado">
+            <input
+              list="hardware-options"
+              className={`form-control ${errors.hardwareId ? 'error' : ''}`}
+              value={hardwareQuery}
+              onChange={e => onHardwareInputChange(e.target.value)}
+              placeholder="Buscar por marca, modelo o serie (opcional)"
+            />
+            <datalist id="hardware-options">
+              {hardwareOptions.map((opt) => (
+                <option key={opt.id} value={opt.display} />
+              ))}
+            </datalist>
             {errors.hardwareId && <p className="text-xs text-danger mt-1">{errors.hardwareId}</p>}
           </FormGroup>
         </div>
@@ -430,14 +624,18 @@ export default function Tickets() {
       {/* DETAIL */}
       <Modal open={showDetail} onClose={() => { setShowDetail(false); setDetail(null) }}
         title={`Ticket #${selected?.id}`} wide
-        footer={canWrite && (
+        footer={(canAddBitacora || canWrite) && (
           <div className="flex gap-2">
-            <button className="btn btn-secondary" onClick={() => { setShowDetail(false); setShowBitacora(true) }}>
-              Agregar Bitacora
-            </button>
-            <button className="btn btn-primary" onClick={() => detail && openEdit(detail)}>
-              Modificar
-            </button>
+            {canAddBitacora && (
+              <button className="btn btn-secondary" onClick={() => { setShowDetail(false); setShowBitacora(true) }}>
+                Agregar Bitacora
+              </button>
+            )}
+            {canWrite && (
+              <button className="btn btn-edit" onClick={() => detail && openEdit(detail)}>
+                Editar
+              </button>
+            )}
           </div>
         )}
       >
@@ -449,7 +647,7 @@ export default function Tickets() {
             <div className="grid grid-cols-2 gap-x-6 gap-y-4">
               {[
                 ['Estado',    <Badge value={detail.estado} />],
-                ['Prioridad', <Badge value={detail.prioridad} />],
+                ['Prioridad', <PriorityBadge value={detail.prioridad} />],
                 ['Juzgado',   detail.juzgado?.nombre || detail.juzgadoNombre || '-'],
                 ['Tecnico',   detail.tecnico?.nombre || detail.tecnicoNombre || 'Sin asignar'],
                 ['Creado',    detail.createdAt?.slice(0,10) || '-'],

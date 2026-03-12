@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import { contratosService, usuariosService } from '../services'
 import { useAsync } from '../hooks/useAsync'
 import { useAuth } from '../context/AuthContext'
-import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast } from '../components'
+import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast, confirmDialog } from '../components'
 
-const ESTADOS_CONTRATO = ['vigente', 'por_vencer', 'vencido', 'pendiente_renovacion']
+const ESTADOS_CONTRATO = ['vigente', 'por_vencer', 'vencido']
 const EMPTY_FORM = { proveedor: '', cobertura: '', detalle: '', fechaInicio: '', fechaVencimiento: '', montoAnual: '', responsableId: '' }
 const formatEnum = (value) => (value || '').toLowerCase().replace(/_/g, ' ')
 const getApiError = (err, fallback) => err.response?.data?.error?.message || err.response?.data?.message || fallback
@@ -62,6 +62,48 @@ function resolveResponsableNombre(item, responsables) {
 
   const responsable = responsables.find((u) => String(u.id) === String(rid))
   return responsable?.nombre || `ID ${rid}`
+}
+
+function resolveEstadoContrato(item, daysUntilFn) {
+  const estado = normalizeEstado(item?.estadoContrato)
+  if (['vigente', 'por_vencer', 'vencido'].includes(estado)) return estado
+
+  const days = daysUntilFn(item?.fechaVencimiento)
+  if (days === null) return 'vigente'
+  if (days < 0) return 'vencido'
+  if (days <= 90) return 'por_vencer'
+  return 'vigente'
+}
+
+function ContractStatusBadge({ estado }) {
+  const palette = {
+    vigente: {
+      chip: 'bg-gradient-to-r from-emerald-50 to-emerald-100 text-emerald-800 ring-1 ring-emerald-200 shadow-sm shadow-emerald-100',
+      dot: 'bg-emerald-500',
+      label: 'Vigente',
+    },
+    por_vencer: {
+      chip: 'bg-gradient-to-r from-amber-50 to-amber-100 text-amber-800 ring-1 ring-amber-200 shadow-sm shadow-amber-100',
+      dot: 'bg-amber-500',
+      label: 'Por vencer',
+    },
+    vencido: {
+      chip: 'bg-gradient-to-r from-rose-50 to-rose-100 text-rose-800 ring-1 ring-rose-200 shadow-sm shadow-rose-100',
+      dot: 'bg-rose-600',
+      label: 'Vencido',
+    },
+  }[estado] || {
+    chip: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200',
+    dot: 'bg-slate-400',
+    label: formatEnum(estado || '-'),
+  }
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold tracking-wide whitespace-nowrap ${palette.chip}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${palette.dot}`} />
+      {palette.label}
+    </span>
+  )
 }
 
 export default function Contratos() {
@@ -127,6 +169,18 @@ export default function Contratos() {
     const errs = validate(form)
     if (Object.keys(errs).length) { setErrors(errs); return }
     setErrors({})
+
+    if (editingId) {
+      const confirmed = await confirmDialog({
+        title: 'Confirmar cambios',
+        text: 'Se actualizara la informacion del contrato.',
+        confirmText: 'Si, guardar',
+        cancelText: 'Cancelar',
+        icon: 'warning',
+      })
+      if (!confirmed) return
+    }
+
     try {
       const payload = buildPayload(form)
       if (editingId) {
@@ -189,7 +243,7 @@ export default function Contratos() {
       item.responsable?.nombre,
     ].map(normalize).join(' ')
 
-    const estadoItem = normalizeEstado(item.estadoContrato)
+    const estadoItem = resolveEstadoContrato(item, daysUntil)
     const matchesSearch = !query || text.includes(query)
     const matchesEstado = !fEstado || estadoItem === fEstado
 
@@ -227,14 +281,19 @@ export default function Contratos() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
           {visibleItems.map(c => {
             const days = daysUntil(c.fechaVencimiento)
-            const warn = days !== null && days <= 90 && days >= 0
+            const status = resolveEstadoContrato(c, daysUntil)
+            const isWarning = status === 'por_vencer'
+            const isExpired = status === 'vencido'
+            const isVigente = status === 'vigente'
             return (
               <div
                 key={c.id}
                 onClick={() => openDetail(c)}
                 className={`bg-white border border-gray-200 rounded-lg p-4 cursor-pointer
                   hover:border-pj-accent hover:shadow-md transition-all duration-150
-                  ${warn ? 'border-l-[3px] border-l-warning' : ''}`}
+                  ${isVigente ? 'border-l-[3px] border-l-success' : ''}
+                  ${isWarning ? 'border-l-[3px] border-l-warning' : ''}
+                  ${isExpired ? 'border-l-[3px] border-l-danger' : ''}`}
               >
                 <div className="text-base font-semibold text-gray-900 mb-0.5">{c.proveedor}</div>
                 <div className="text-xs text-gray-500 mb-3">{c.cobertura || 'Sin descripcion de cobertura'}</div>
@@ -242,17 +301,25 @@ export default function Contratos() {
                   <div className="flex gap-4">
                     <div>
                       <div className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">Vencimiento</div>
-                      <div className={`text-sm mt-0.5 font-mono ${warn ? 'text-warning font-semibold' : 'text-gray-700'}`}>
+                      <div className={`text-sm mt-0.5 font-mono ${isWarning ? 'text-warning font-semibold' : isExpired ? 'text-danger font-semibold' : 'text-gray-700'}`}>
                         {c.fechaVencimiento || '-'}
                       </div>
                     </div>
                     <div>
                       <div className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">Estado</div>
-                      <div className="mt-0.5"><Badge value={c.estadoContrato} /></div>
+                      <div className="mt-0.5"><ContractStatusBadge estado={status} /></div>
                     </div>
                   </div>
-                  {warn && days !== null && (
-                    <div className="text-xs font-semibold text-warning bg-warning-light px-2 py-0.5 rounded-full">
+                  {days !== null && (
+                    <div className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                      isVigente
+                        ? 'text-success bg-success-light'
+                        : isWarning
+                          ? 'text-warning bg-warning-light'
+                          : isExpired
+                            ? 'text-danger bg-danger-light'
+                            : 'text-gray-500 bg-gray-100'
+                    }`}>
                       {days}d
                     </div>
                   )}
@@ -332,7 +399,7 @@ export default function Contratos() {
           <>
             <button className="btn btn-secondary" onClick={() => setShowDetail(false)}>Cerrar</button>
             <button
-              className="btn btn-primary"
+              className="btn btn-edit"
               onClick={async () => {
                 setShowDetail(false)
                 await openEditModal(selected)
@@ -350,7 +417,7 @@ export default function Contratos() {
             <div className="grid grid-cols-2 gap-x-6 gap-y-4">
               {[
                 ['Proveedor',   selected.proveedor],
-                ['Estado',      <Badge value={selected.estadoContrato} />],
+                ['Estado',      <ContractStatusBadge estado={resolveEstadoContrato(selected, daysUntil)} />],
                 ['Cobertura',   selected.cobertura || '-'],
                 ['Responsable', resolveResponsableNombre(selected, responsables)],
                 ['Inicio',      selected.fechaInicio || '-'],

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { organizacionService } from '../services'
 import { useAuth } from '../context/AuthContext'
 import { useAsync } from '../hooks/useAsync'
-import { PageHeader, EmptyState, Spinner, Modal, FormGroup, showToast } from '../components'
+import { PageHeader, EmptyState, Spinner, Modal, FormGroup, showToast, confirmDialog } from '../components'
 
 const TYPE_BY_LEVEL = ['circunscripcion', 'distrito', 'juzgado']
 const EMPTY_FORM = { tipo: 'juzgado', nombre: '', ciudad: '', parentId: '' }
@@ -119,7 +119,7 @@ function OrgNode({ node, level = 0, parent = null, canWrite = false, onEdit }) {
           {canWrite && node.id && (
             <button
               type="button"
-              className="btn btn-ghost btn-sm"
+              className="btn btn-edit btn-sm"
               onClick={(e) => {
                 e.stopPropagation()
                 onEdit?.({
@@ -236,6 +236,16 @@ export default function Organizacion() {
     }
 
     setEditErrors({})
+
+    const confirmed = await confirmDialog({
+      title: 'Confirmar cambios',
+      text: 'Se actualizara la informacion del nodo.',
+      confirmText: 'Si, guardar',
+      cancelText: 'Cancelar',
+      icon: 'warning',
+    })
+    if (!confirmed) return
+
     try {
       await run(organizacionService.actualizar(editForm.tipo, editForm.id, buildPayload(editForm)))
       showToast('Nodo actualizado correctamente.', 'success')

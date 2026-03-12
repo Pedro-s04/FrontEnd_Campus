@@ -38,6 +38,7 @@
   .btn-secondary { @apply bg-white text-gray-700 border-gray-300 hover:bg-gray-50; }
   .btn-danger   { @apply bg-danger text-white border-danger hover:bg-red-700; }
   .btn-ghost    { @apply bg-transparent text-pj-mid border-transparent hover:bg-pj-pale; }
+  .btn-edit     { @apply bg-white text-pj-mid border-pj-mid/30 hover:bg-pj-pale; }
   .btn-sm       { @apply px-2.5 py-1 text-xs; }
 
   /* Form controls */
@@ -57,9 +58,9 @@
   .badge-en_curso   { @apply bg-warning-light text-warning; }
   .badge-cerrado    { @apply bg-success-light text-success; }
   .badge-pendiente  { @apply bg-purple-100 text-purple-700; }
-  .badge-alta       { @apply bg-danger-light text-danger; }
-  .badge-media      { @apply bg-warning-light text-warning; }
-  .badge-baja       { @apply bg-success-light text-success; }
+  .badge-alta       { @apply bg-red-600 text-white; }
+  .badge-media      { @apply bg-amber-100 text-amber-800; }
+  .badge-baja       { @apply bg-gray-100 text-gray-500; }
   .badge-operativo  { @apply bg-success-light text-success; }
   .badge-en_reparacion { @apply bg-warning-light text-warning; }
   .badge-deposito   { @apply bg-info-light text-info; }

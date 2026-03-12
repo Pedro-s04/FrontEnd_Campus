@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { softwareService, contratosService } from '../services'
 import { useAsync } from '../hooks/useAsync'
 import { useAuth } from '../context/AuthContext'
-import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast } from '../components'
+import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast, confirmDialog } from '../components'
 
 const TIPOS_LICENCIA = ['suscripcion_anual', 'perpetua', 'por_puesto']
 const ESTADOS_LICENCIA = ['vigente', 'por_vencer', 'vencida']
@@ -144,6 +144,16 @@ export default function Software() {
     const errs = validate(editForm)
     if (Object.keys(errs).length) { setEditErrors(errs); return }
     setEditErrors({})
+
+    const confirmed = await confirmDialog({
+      title: 'Confirmar cambios',
+      text: 'Se actualizaran los datos de la licencia.',
+      confirmText: 'Si, guardar',
+      cancelText: 'Cancelar',
+      icon: 'warning',
+    })
+    if (!confirmed) return
+
     try {
       await run(softwareService.actualizar(editId, {
         nombre: editForm.nombre,
@@ -240,7 +250,7 @@ export default function Software() {
                   <td className="td text-center text-sm text-gray-600">{item.puestos ?? '-'}</td>
                   {canWrite && (
                     <td className="td text-center">
-                      <button className="btn btn-secondary" onClick={() => openEdit(item)}>
+                      <button className="btn btn-edit btn-sm" onClick={() => openEdit(item)}>
                         Editar
                       </button>
                     </td>

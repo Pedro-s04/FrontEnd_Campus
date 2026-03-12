@@ -184,6 +184,16 @@ export default function Usuarios() {
     const errs = validateEdit(editForm)
     if (Object.keys(errs).length) { setEditErrors(errs); return }
     setEditErrors({})
+
+    const confirmed = await confirmDialog({
+      title: 'Confirmar cambios',
+      text: 'Se actualizaran los datos del usuario.',
+      confirmText: 'Si, guardar',
+      cancelText: 'Cancelar',
+      icon: 'warning',
+    })
+    if (!confirmed) return
+
     try {
       await run(usuariosService.editar(selected.id, {
         nombre:    editForm.nombre,
@@ -210,7 +220,7 @@ export default function Usuarios() {
     if (!confirmed) return
 
     try {
-      await usuariosService.eliminar(u.id)
+      await run(usuariosService.editar(u.id, { activo: false }))
       showToast('Usuario dado de baja', 'success')
       load()
     } catch (err) {
@@ -286,7 +296,7 @@ export default function Usuarios() {
                     </td>
                     <td className="td">
                       <div className="flex gap-1.5">
-                        <button className="btn btn-ghost btn-sm" onClick={() => openEdit(u)}>Editar</button>
+                        <button className="btn btn-edit btn-sm" onClick={() => openEdit(u)}>Editar</button>
                         {u.activo && (
                           <button className="btn btn-sm bg-transparent border-transparent text-danger hover:bg-danger-light" onClick={() => handleBaja(u)}>
                             Baja

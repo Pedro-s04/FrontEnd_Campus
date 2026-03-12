@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { showToast } from './index'
+import logoMesaJudicall from '../assets/logoMesaJudicall.png'
 
 const NavIcon = ({ d, viewBox = '0 0 24 24' }) => (
   <svg width="16" height="16" viewBox={viewBox} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -85,6 +87,7 @@ function NavSection({ label, children }) {
 export default function Sidebar() {
   const { user, logout, isAdmin, isOperador, isTecnico } = useAuth()
   const navigate = useNavigate()
+  const [logoFailed, setLogoFailed] = useState(false)
 
   function handleLogout() {
     logout()
@@ -99,18 +102,21 @@ export default function Sidebar() {
   return (
     <aside className="w-60 bg-pj-navy flex flex-col flex-shrink-0 h-screen overflow-y-auto">
       {/* Logo */}
-      <div className="px-4 py-5 pb-4 border-b border-white/[0.08]">
-        <div className="w-9 h-9 bg-pj-mid rounded-md flex items-center justify-center mb-2.5 text-white">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-          </svg>
-        </div>
-        <div className="text-[11px] font-semibold uppercase tracking-widest text-white/50 leading-snug">
-          Poder Judicial
-        </div>
-        <div className="text-[13px] font-semibold text-white mt-0.5">
-          Soporte e Inventario
-        </div>
+      <div className="px-4 py-4 border-b border-white/[0.08]">
+        {!logoFailed ? (
+          <img
+            src={logoMesaJudicall}
+            alt="Poder Judicial"
+            className="w-full h-auto rounded-md object-contain"
+            onError={() => setLogoFailed(true)}
+          />
+        ) : (
+          <div className="w-16 h-16 bg-pj-mid rounded-md flex items-center justify-center text-white">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </div>
+        )}
       </div>
 
       {/* Nav */}
