@@ -7,6 +7,19 @@ const ROLES_MAP = { 1: 'ADMINISTRADOR', 2: 'OPERADOR', 3: 'TECNICO' }
 
 const EMPTY_FORM = { legajo: '', username: '', nombre: '', email: '', password: '', rolId: '2', juzgadoId: '' }
 const getApiError = (err, fallback) => err.response?.data?.error?.message || err.response?.data?.message || fallback
+const normalize = (value) =>
+  (value || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+
+const normalizeRole = (value) =>
+  normalize(value)
+    .replace(/^role_/, '')
+    .replace(/\s+/g, '_')
+    .toUpperCase()
 
 function validateCreate(form) {
   const e = {}
@@ -36,8 +49,21 @@ function resolveRol(user) {
   const roleId = user?.rolId ?? user?.idRol ?? user?.rol?.id ?? (typeof user?.rol === 'number' ? user.rol : null)
   const fromId = roleId != null ? ROLES_MAP[Number(roleId)] : null
 
-  const normalized = (fromRolString || fromRolObject || user?.rolNombre || user?.role || fromId || '').toString().trim().toUpperCase()
-  return normalized
+  const candidates = [fromRolString, fromRolObject, user?.rolNombre, user?.role, fromId]
+  for (const candidate of candidates) {
+    const value = normalizeRole(candidate)
+    if (value) return value
+  }
+  return ''
+}
+
+function normalizeUsuario(user) {
+  return {
+    ...user,
+    rolNombre: resolveRol(user),
+    juzgadoNombre: user?.juzgadoNombre || user?.juzgado?.nombre || '',
+    juzgadoId: user?.juzgadoId ?? user?.juzgado?.id ?? '',
+  }
 }
 
 export default function Usuarios() {
@@ -66,15 +92,15 @@ export default function Usuarios() {
   async function load() {
     setLoading(true)
     try {
-      const params = { page: 0, size: 50 }
-      if (fRol) params.rol = fRol
+      const params = { page: 0, size: 200 }
       if (debouncedSearch) params.search = debouncedSearch
       if (fActivo === 'true') params.activo = true
       if (fActivo === 'false') params.activo = false
 
       const res = await usuariosService.listar(params)
       const d = res.data?.data
-      setItems(Array.isArray(d) ? d : d?.content ?? [])
+      const list = Array.isArray(d) ? d : d?.content ?? []
+      setItems(list.map(normalizeUsuario))
     } catch (err) {
       showToast(getApiError(err, 'Error al cargar usuarios'), 'error')
       setItems([])
@@ -94,16 +120,40 @@ export default function Usuarios() {
   }, [])
 
   function openEdit(u) {
+    const juzgadoIdFromNombre =
+      juzgados.find((j) => normalize(j.nombre) === normalize(u.juzgadoNombre))?.id || ''
+
     setSelected(u)
     setEditForm({
       nombre:    u.nombre    || '',
       email:     u.email     || '',
-      juzgadoId: u.juzgado?.id || u.juzgadoId || '',
+      juzgadoId: u.juzgado?.id || u.juzgadoId || juzgadoIdFromNombre,
       activo:    u.activo ?? true,
     })
     setEditErrors({})
     setShowEdit(true)
   }
+
+  const visibleItems = items.filter((u) => {
+    const role = resolveRol(u)
+    const text = normalize([
+      u.nombre,
+      u.username,
+      u.legajo,
+      u.email,
+      role,
+      u.juzgadoNombre,
+    ].join(' '))
+
+    const matchesSearch = !debouncedSearch || text.includes(normalize(debouncedSearch))
+    const matchesRole = !fRol || role === fRol
+    const matchesActive =
+      !fActivo ||
+      (fActivo === 'true' && u.activo === true) ||
+      (fActivo === 'false' && u.activo === false)
+
+    return matchesSearch && matchesRole && matchesActive
+  })
 
   async function handleCreate(e) {
     e.preventDefault()
@@ -215,9 +265,9 @@ export default function Usuarios() {
             <tbody>
               {loading ? (
                 <tr><td colSpan={7} className="td text-center py-12"><Spinner /></td></tr>
-              ) : items.length === 0 ? (
+              ) : visibleItems.length === 0 ? (
                 <tr><td colSpan={7}><EmptyState title="Sin usuarios" text="No se encontraron usuarios." /></td></tr>
-              ) : items.map(u => {
+              ) : visibleItems.map(u => {
                 const roleLabel = resolveRol(u)
                 return (
                   <tr key={u.id} className="tr-body">

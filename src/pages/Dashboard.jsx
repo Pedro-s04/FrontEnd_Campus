@@ -1,6 +1,63 @@
 import { useEffect, useState } from 'react'
 import { dashboardService } from '../services'
-import { PageHeader, StatCard, Spinner, EmptyState } from '../components'
+import { PageHeader, StatCard, Spinner, EmptyState, showToast } from '../components'
+
+const toNumber = (value) => {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+const firstNumber = (...values) => {
+  for (const value of values) {
+    const n = toNumber(value)
+    if (n !== null) return n
+  }
+  return null
+}
+
+function normalizeStats(raw) {
+  const source = raw || {}
+
+  const abiertosDerivados =
+    Number(source.ticketsSolicitados ?? 0) +
+    Number(source.ticketsAsignados ?? 0) +
+    Number(source.ticketsEnCurso ?? 0)
+
+  return {
+    ticketsAbiertos: firstNumber(source.ticketsAbiertos, abiertosDerivados),
+    ticketsEnCurso: firstNumber(source.ticketsEnCurso),
+    equiposRegistrados: firstNumber(source.equiposRegistrados, source.hwTotal),
+    contratosVigentes: firstNumber(source.contratosVigentes),
+  }
+}
+
+function normalizeJuzgado(item) {
+  return {
+    juzgado:
+      item?.juzgado ??
+      item?.juzgadoNombre ??
+      item?.nombreJuzgado ??
+      item?.nombre ??
+      '-',
+    totalAbiertos: firstNumber(
+      item?.totalAbiertos,
+      item?.cantidadAbiertos,
+      item?.ticketsAbiertos,
+      item?.cantidad,
+      item?.total
+    ) ?? 0,
+  }
+}
+
+function normalizeContrato(item) {
+  return {
+    proveedor: item?.proveedor ?? item?.proveedorNombre ?? item?.nombreProveedor ?? '-',
+    cobertura: item?.cobertura ?? item?.detalle ?? item?.descripcion ?? '-',
+    fechaVencimiento: item?.fechaVencimiento ?? item?.fechaFin ?? item?.vencimiento ?? '-',
+  }
+}
+
+const getApiError = (err, fallback) => err.response?.data?.error?.message || err.response?.data?.message || fallback
 
 function DashCard({ title, children }) {
   return (
@@ -26,10 +83,20 @@ export default function Dashboard() {
           dashboardService.ticketsPorJuzgado(),
           dashboardService.contratosVencer(90),
         ])
-        setStats(s.data?.data ?? s.data)
-        setJuzgados(j.data?.data ?? j.data ?? [])
-        setContratos(c.data?.data ?? c.data ?? [])
-      } catch (_) {}
+
+        const statsPayload = s.data?.data ?? s.data ?? {}
+        const juzgadosPayload = j.data?.data ?? j.data ?? []
+        const contratosPayload = c.data?.data ?? c.data ?? []
+
+        setStats(normalizeStats(statsPayload))
+        setJuzgados(Array.isArray(juzgadosPayload) ? juzgadosPayload.map(normalizeJuzgado) : [])
+        setContratos(Array.isArray(contratosPayload) ? contratosPayload.map(normalizeContrato) : [])
+      } catch (err) {
+        setStats(null)
+        setJuzgados([])
+        setContratos([])
+        showToast(getApiError(err, 'No se pudo cargar el dashboard'), 'error')
+      }
       setLoading(false)
     }
     load()
