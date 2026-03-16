@@ -3,6 +3,8 @@ import { softwareService, contratosService } from '../services'
 import { useAsync } from '../hooks/useAsync'
 import { useAuth } from '../context/AuthContext'
 import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, PaginationControls, showToast, confirmDialog } from '../components'
+import { getApiError } from '../utils/api'
+import { parsePaginatedData } from '../utils/pagination'
 
 const TIPOS_LICENCIA = ['suscripcion_anual', 'perpetua', 'por_puesto']
 const ESTADOS_LICENCIA = ['vigente', 'por_vencer', 'vencida']
@@ -16,7 +18,6 @@ const normalize = (value) =>
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-const getApiError = (err, fallback) => err.response?.data?.error?.message || err.response?.data?.message || fallback
 const toDateInput = (value) => (value ? String(value).slice(0, 10) : '')
 
 function daysUntil(dateStr) {
@@ -40,32 +41,6 @@ function validate(form) {
   if (!form.nombre.trim())      e.nombre     = 'El nombre es obligatorio.'
   if (!form.fabricante.trim())  e.fabricante = 'El fabricante es obligatorio.'
   return e
-}
-
-function parsePaginatedData(data, fallbackSize = 10) {
-  const source = data ?? []
-  if (Array.isArray(source)) {
-    return {
-      content: source,
-      number: 0,
-      size: source.length || fallbackSize,
-      totalPages: 1,
-      totalElements: source.length,
-    }
-  }
-
-  const content = Array.isArray(source.content) ? source.content : []
-  const size = Number(source.size) > 0 ? Number(source.size) : fallbackSize
-  const totalElementsRaw = Number(source.totalElements)
-  const totalElements = Number.isFinite(totalElementsRaw) ? totalElementsRaw : content.length
-  const totalPagesRaw = Number(source.totalPages)
-  const totalPages = Number.isFinite(totalPagesRaw) && totalPagesRaw > 0
-    ? totalPagesRaw
-    : Math.max(Math.ceil(totalElements / size), 1)
-  const numberRaw = Number(source.number ?? source.page ?? 0)
-  const number = Number.isFinite(numberRaw) && numberRaw >= 0 ? numberRaw : 0
-
-  return { content, number, size, totalPages, totalElements }
 }
 
 export default function Software() {

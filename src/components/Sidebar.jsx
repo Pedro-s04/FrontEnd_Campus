@@ -4,12 +4,6 @@ import { useAuth } from '../context/AuthContext'
 import { showToast } from './index'
 import logoMesaJudicall from '../assets/logoMesaJudicall.png'
 
-const NavIcon = ({ d, viewBox = '0 0 24 24' }) => (
-  <svg width="16" height="16" viewBox={viewBox} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-    <path d={d} />
-  </svg>
-)
-
 const ICONS = {
   tickets: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">

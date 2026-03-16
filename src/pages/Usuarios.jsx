@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { usuariosService, organizacionService } from '../services'
 import { useAsync } from '../hooks/useAsync'
 import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, PaginationControls, showToast, confirmDialog } from '../components'
+import { getApiError } from '../utils/api'
+import { parsePaginatedData } from '../utils/pagination'
 
 const ROLES_MAP = { 1: 'ADMINISTRADOR', 2: 'OPERADOR', 3: 'TECNICO' }
 
 const EMPTY_FORM = { legajo: '', username: '', nombre: '', email: '', password: '', rolId: '2', juzgadoId: '' }
-const getApiError = (err, fallback) => err.response?.data?.error?.message || err.response?.data?.message || fallback
 const normalize = (value) =>
   (value || '')
     .toString()
@@ -64,32 +65,6 @@ function normalizeUsuario(user) {
     juzgadoNombre: user?.juzgadoNombre || user?.juzgado?.nombre || '',
     juzgadoId: user?.juzgadoId ?? user?.juzgado?.id ?? '',
   }
-}
-
-function parsePaginatedData(data, fallbackSize = 10) {
-  const source = data ?? []
-  if (Array.isArray(source)) {
-    return {
-      content: source,
-      number: 0,
-      size: source.length || fallbackSize,
-      totalPages: 1,
-      totalElements: source.length,
-    }
-  }
-
-  const content = Array.isArray(source.content) ? source.content : []
-  const size = Number(source.size) > 0 ? Number(source.size) : fallbackSize
-  const totalElementsRaw = Number(source.totalElements)
-  const totalElements = Number.isFinite(totalElementsRaw) ? totalElementsRaw : content.length
-  const totalPagesRaw = Number(source.totalPages)
-  const totalPages = Number.isFinite(totalPagesRaw) && totalPagesRaw > 0
-    ? totalPagesRaw
-    : Math.max(Math.ceil(totalElements / size), 1)
-  const numberRaw = Number(source.number ?? source.page ?? 0)
-  const number = Number.isFinite(numberRaw) && numberRaw >= 0 ? numberRaw : 0
-
-  return { content, number, size, totalPages, totalElements }
 }
 
 export default function Usuarios() {

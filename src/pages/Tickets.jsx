@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
+import emailjs from '@emailjs/browser'
+import Swal from 'sweetalert2'
 import { ticketsService, organizacionService, usuariosService, hardwareService } from '../services'
 import { useAsync } from '../hooks/useAsync'
 import { useAuth } from '../context/AuthContext'
 import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, PaginationControls, showToast, confirmDialog } from '../components'
+import { getApiError, getValidationDetail } from '../utils/api'
+import { parsePaginatedData } from '../utils/pagination'
 
 const ESTADOS     = ['solicitado', 'asignado', 'en_curso', 'cerrado']
 const PRIORIDADES = ['alta', 'media', 'baja']
@@ -15,11 +19,35 @@ const CATEGORIAS  = [
   { label: 'Otro', value: 'otro' },
 ]
 const EMPTY_FORM  = { descripcion: '', categoria: '', prioridad: 'media', juzgadoId: '', tecnicoId: '', hardwareId: '' }
+let emailJsInitialized = false
 
 const normalizeTicketValue = (value) => (value || '').toLowerCase()
 const formatEnum = (value) => (value || '').toLowerCase().replace('_', ' ')
-const getApiError = (err, fallback) => err.response?.data?.error?.message || err.response?.data?.message || fallback
-const getValidationDetail = (err) => err.response?.data?.error?.details?.[0]?.message
+const getEmailErrorDetail = (err) => {
+  if (!err) return 'Error desconocido de EmailJS.'
+
+  const status = err?.status ? `status ${err.status}` : ''
+  const text = err?.text || err?.message || ''
+  const detail = [status, text].filter(Boolean).join(' - ')
+
+  return detail || 'Error desconocido de EmailJS.'
+}
+
+const readEnvValue = (...keys) => {
+  for (const key of keys) {
+    const value = import.meta.env?.[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+const getEmailJsConfig = () => {
+  const serviceId = readEnvValue('VITE_EMAILJS_SERVICE_ID', 'VITE_EMAILJS_SERVICE')
+  const templateId = readEnvValue('VITE_EMAILJS_TEMPLATE_ID', 'VITE_EMAILJS_TEMPLATE')
+  const publicKey = readEnvValue('VITE_EMAILJS_PUBLIC_KEY', 'VITE_EMAILJS_USER_ID', 'VITE_EMAILJS_KEY')
+
+  return { serviceId, templateId, publicKey }
+}
 
 const normalizeText = (value) =>
   (value || '')
@@ -121,30 +149,35 @@ function toHardwareOption(item) {
   }
 }
 
-function parsePaginatedData(data, fallbackSize = 10) {
-  const source = data ?? []
-  if (Array.isArray(source)) {
-    return {
-      content: source,
-      number: 0,
-      size: source.length || fallbackSize,
-      totalPages: 1,
-      totalElements: source.length,
-    }
+async function sendTicketNotificationByEmail({ ticketId, descripcion, juzgado, prioridad, tecnicoEmail, tecnicoNombre }) {
+  const config = getEmailJsConfig()
+
+  const missingKeys = []
+  if (!config.serviceId) missingKeys.push('VITE_EMAILJS_SERVICE_ID')
+  if (!config.templateId) missingKeys.push('VITE_EMAILJS_TEMPLATE_ID')
+  if (!config.publicKey) missingKeys.push('VITE_EMAILJS_PUBLIC_KEY')
+
+  if (missingKeys.length > 0) {
+    throw new Error(`EmailJS no esta configurado. Falta definir: ${missingKeys.join(', ')}`)
   }
 
-  const content = Array.isArray(source.content) ? source.content : []
-  const size = Number(source.size) > 0 ? Number(source.size) : fallbackSize
-  const totalElementsRaw = Number(source.totalElements)
-  const totalElements = Number.isFinite(totalElementsRaw) ? totalElementsRaw : content.length
-  const totalPagesRaw = Number(source.totalPages)
-  const totalPages = Number.isFinite(totalPagesRaw) && totalPagesRaw > 0
-    ? totalPagesRaw
-    : Math.max(Math.ceil(totalElements / size), 1)
-  const numberRaw = Number(source.number ?? source.page ?? 0)
-  const number = Number.isFinite(numberRaw) && numberRaw >= 0 ? numberRaw : 0
+  if (!emailJsInitialized) {
+    emailjs.init({ publicKey: config.publicKey })
+    emailJsInitialized = true
+  }
 
-  return { content, number, size, totalPages, totalElements }
+  const templateParams = {
+    ticket_id: ticketId,
+    ticket_descripcion: descripcion,
+    ticket_juzgado: juzgado,
+    ticket_prioridad: prioridad,
+    to_email: tecnicoEmail,
+    tecnico_email: tecnicoEmail,
+    email: tecnicoEmail,
+    tecnico_nombre: tecnicoNombre,
+  }
+
+  await emailjs.send(config.serviceId, config.templateId, templateParams)
 }
 
 function BitacoraTimeline({ entries }) {
@@ -429,6 +462,9 @@ export default function Tickets() {
     const errs = validate(form, hardwareQuery)
     if (Object.keys(errs).length) { setErrors(errs); return }
     setErrors({})
+
+    let createdTicket = null
+
     try {
       const basePayload = {
         descripcion: form.descripcion.trim(),
@@ -451,13 +487,63 @@ export default function Tickets() {
         prioridad: normalizeTicketValue(form.prioridad),
       }
 
-      await run(ticketsService.crear(payload))
+      const createRes = await run(ticketsService.crear(payload))
+      createdTicket = createRes?.data?.data ?? createRes?.data ?? null
 
-      showToast('Ticket creado correctamente', 'success')
+      if (createRes?.status === 201) {
+        const ticketId = createdTicket?.id || createdTicket?.ticketId || ''
+        const juzgadoNombre =
+          juzgados.find((j) => String(j.id) === String(form.juzgadoId))?.nombre
+          || createdTicket?.juzgado?.nombre
+          || createdTicket?.juzgadoNombre
+          || ''
+
+        const tecnicoSeleccionado = [...tecnicosDisponibles, ...tecnicos]
+          .find((t) => String(t.id) === String(form.tecnicoId))
+        const tecnicoEmail = (tecnicoSeleccionado?.email || '').trim()
+
+        if (!form.tecnicoId) {
+          throw new Error('No se envio el correo porque el ticket se creo sin tecnico asignado.')
+        }
+
+        if (!tecnicoEmail) {
+          throw new Error('El tecnico seleccionado no tiene email cargado.')
+        }
+
+        await sendTicketNotificationByEmail({
+          ticketId,
+          descripcion: payload.descripcion,
+          juzgado: juzgadoNombre,
+          prioridad: formatEnum(payload.prioridad),
+          tecnicoEmail,
+          tecnicoNombre: tecnicoSeleccionado?.nombre || '',
+        })
+      }
+
       setShowCreate(false)
       setForm(EMPTY_FORM)
-      loadTickets()
+      setHardwareQuery('')
+      await loadTickets()
+
+      if (createRes?.status === 201) {
+        await Swal.fire({
+          icon: 'success',
+          title: 'Ticket creado y operador notificado',
+          confirmButtonText: 'Aceptar',
+        })
+      } else {
+        showToast('Ticket creado correctamente', 'success')
+      }
     } catch (err) {
+      if (createdTicket) {
+        setShowCreate(false)
+        setForm(EMPTY_FORM)
+        setHardwareQuery('')
+        await loadTickets()
+        showToast(`Ticket creado, pero no se pudo enviar el correo al operador. ${getEmailErrorDetail(err)}`, 'warning')
+        return
+      }
+
       showToast(getValidationDetail(err) || getApiError(err, 'Error al crear ticket'), 'error')
     }
   }
@@ -466,7 +552,6 @@ export default function Tickets() {
     e.preventDefault()
     const descripcionValue = (detail?.descripcion || selected?.descripcion || '').trim()
     const juzgadoValue = Number(detail?.juzgado?.id || detail?.juzgadoId || selected?.juzgado?.id || selected?.juzgadoId || 0)
-    const previousEstado = normalizeTicketValue(detail?.estado || selected?.estado)
 
     if (descripcionValue.length < 10) {
       showToast('La descripcion debe tener al menos 10 caracteres.', 'error')
@@ -509,17 +594,6 @@ export default function Tickets() {
       if (hardwareIdValue) payload.hardwareId = Number(hardwareIdValue)
 
       await run(ticketsService.actualizar(selected.id, payload))
-
-      // Deja trazabilidad explicita en bitacora al momento del cierre.
-      if (editForm.estado === 'cerrado' && previousEstado !== 'cerrado' && payload.resolucion) {
-        try {
-          await run(ticketsService.addBitacora(selected.id, {
-            texto: `Cierre de ticket. Resolucion: ${payload.resolucion}`,
-          }))
-        } catch (_) {
-          showToast('El ticket se cerro, pero no se pudo registrar la resolucion en bitacora.', 'warning')
-        }
-      }
 
       showToast('Ticket actualizado', 'success')
       setShowEdit(false)

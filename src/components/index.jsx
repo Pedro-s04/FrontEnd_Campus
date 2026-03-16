@@ -207,11 +207,7 @@ export function PaginationControls({
   embedded = false,
 }) {
   const safeTotalPages = Math.max(Number(totalPages) || 1, 1)
-  const safeSize = Number(size) > 0 ? Number(size) : 10
   const safePage = Math.min(Math.max(Number(page) || 0, 0), safeTotalPages - 1)
-  const hasItems = Number(totalElements) > 0
-  const from = hasItems ? (safePage * safeSize) + 1 : 0
-  const to = hasItems ? Math.min(Number(totalElements), (safePage + 1) * safeSize) : 0
 
   const buildPageItems = () => {
     if (safeTotalPages <= 7) {
@@ -237,32 +233,7 @@ export function PaginationControls({
 
   return (
     <div className={embedded ? 'px-3.5 py-2.5' : 'mt-3.5 rounded-lg border border-gray-200 bg-white px-3 py-2.5 shadow-sm'}>
-      <div className="flex flex-wrap items-center justify-between gap-2.5">
-        <div className="text-xs text-gray-500">
-          Mostrando <span className="font-semibold text-gray-700">{from}-{to}</span> de <span className="font-semibold text-gray-700">{Number(totalElements) || 0}</span> registros
-        </div>
-
-        <div className="flex items-center gap-2.5">
-          <div className="flex items-center gap-1.5">
-            <label className="text-xs text-gray-500">Filas:</label>
-            <select
-              className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-pj-accent"
-              value={safeSize}
-              onChange={(e) => onSizeChange?.(Number(e.target.value))}
-            >
-              {sizeOptions.map((opt) => (
-                <option key={opt} value={opt}>{opt}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="text-xs text-gray-500 min-w-[100px] text-center">
-            Pagina <span className="font-semibold text-gray-700">{safePage + 1}</span> / <span className="font-semibold text-gray-700">{safeTotalPages}</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-2.5 flex flex-wrap items-center justify-end gap-1.5">
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
         <button
           className={`${navBtnBase} ${navBtnTone}`}
           onClick={() => onPageChange?.(0)}

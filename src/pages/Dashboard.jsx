@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { dashboardService, ticketsService } from '../services'
 import { useAuth } from '../context/AuthContext'
 import { PageHeader, StatCard, Spinner, EmptyState, showToast } from '../components'
+import { getApiError } from '../utils/api'
 
 const toNumber = (value) => {
   const n = Number(value)
@@ -130,8 +131,6 @@ function normalizeContrato(item) {
     juzgadoNombre: item?.juzgado?.nombre ?? item?.juzgadoNombre ?? item?.nombreJuzgado ?? '',
   }
 }
-
-const getApiError = (err, fallback) => err.response?.data?.error?.message || err.response?.data?.message || fallback
 
 function DashCard({ title, children }) {
   return (
