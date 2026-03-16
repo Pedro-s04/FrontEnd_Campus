@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { contratosService, usuariosService } from '../services'
 import { useAsync } from '../hooks/useAsync'
 import { useAuth } from '../context/AuthContext'
-import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast, confirmDialog } from '../components'
+import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, PaginationControls, showToast, confirmDialog } from '../components'
 
 const ESTADOS_CONTRATO = ['vigente', 'por_vencer', 'vencido']
 const EMPTY_FORM = { proveedor: '', cobertura: '', detalle: '', fechaInicio: '', fechaVencimiento: '', montoAnual: '', responsableId: '' }
@@ -24,6 +24,11 @@ function validate(form) {
   if (!form.proveedor.trim())     e.proveedor        = 'El proveedor es obligatorio.'
   if (!form.cobertura.trim())     e.cobertura        = 'La cobertura es obligatoria.'
   if (!form.fechaVencimiento)     e.fechaVencimiento = 'La fecha de vencimiento es obligatoria.'
+  if (form.montoAnual !== '') {
+    const monto = Number(form.montoAnual)
+    if (!Number.isFinite(monto)) e.montoAnual = 'El monto anual debe ser numerico.'
+    else if (monto <= 0) e.montoAnual = 'El monto anual debe ser mayor a 0.'
+  }
   return e
 }
 
@@ -75,6 +80,32 @@ function resolveEstadoContrato(item, daysUntilFn) {
   return 'vigente'
 }
 
+function parsePaginatedData(data, fallbackSize = 12) {
+  const source = data ?? []
+  if (Array.isArray(source)) {
+    return {
+      content: source,
+      number: 0,
+      size: source.length || fallbackSize,
+      totalPages: 1,
+      totalElements: source.length,
+    }
+  }
+
+  const content = Array.isArray(source.content) ? source.content : []
+  const size = Number(source.size) > 0 ? Number(source.size) : fallbackSize
+  const totalElementsRaw = Number(source.totalElements)
+  const totalElements = Number.isFinite(totalElementsRaw) ? totalElementsRaw : content.length
+  const totalPagesRaw = Number(source.totalPages)
+  const totalPages = Number.isFinite(totalPagesRaw) && totalPagesRaw > 0
+    ? totalPagesRaw
+    : Math.max(Math.ceil(totalElements / size), 1)
+  const numberRaw = Number(source.number ?? source.page ?? 0)
+  const number = Number.isFinite(numberRaw) && numberRaw >= 0 ? numberRaw : 0
+
+  return { content, number, size, totalPages, totalElements }
+}
+
 function ContractStatusBadge({ estado }) {
   const palette = {
     vigente: {
@@ -115,6 +146,9 @@ export default function Contratos() {
   const [search,     setSearch]     = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [fEstado,    setFEstado]    = useState('')
+  const [page,      setPage]      = useState(0)
+  const [size,      setSize]      = useState(12)
+  const [pagination, setPagination] = useState({ totalPages: 1, totalElements: 0 })
   const [showCreate, setShowCreate] = useState(false)
   const [editingId,  setEditingId]  = useState(null)
   const [responsables, setResponsables] = useState([])
@@ -132,20 +166,32 @@ export default function Contratos() {
   async function load() {
     setLoading(true)
     try {
-      const params = { page: 0, size: 50 }
+      const params = { page, size }
       if (debouncedSearch) params.search = debouncedSearch
 
       const res = await contratosService.listar(params)
-      const d = res.data?.data
-      setItems(Array.isArray(d) ? d : d?.content ?? [])
+      const parsed = parsePaginatedData(res.data?.data ?? res.data, size)
+
+      if (parsed.totalPages > 0 && page >= parsed.totalPages) {
+        setPage(parsed.totalPages - 1)
+        return
+      }
+
+      setItems(parsed.content)
+      setPagination({ totalPages: parsed.totalPages, totalElements: parsed.totalElements })
     } catch (err) {
       showToast(getApiError(err, 'Error al cargar contratos'), 'error')
       setItems([])
+      setPagination({ totalPages: 1, totalElements: 0 })
     }
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [debouncedSearch, fEstado])
+  useEffect(() => { load() }, [page, size, debouncedSearch, fEstado])
+
+  useEffect(() => {
+    if (page !== 0) setPage(0)
+  }, [debouncedSearch, fEstado])
 
   useEffect(() => {
     usuariosService
@@ -273,62 +319,81 @@ export default function Contratos() {
         </select>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center py-16"><Spinner size={8} /></div>
-      ) : visibleItems.length === 0 ? (
-        <EmptyState title="Sin contratos" text="No se encontraron contratos registrados." />
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-          {visibleItems.map(c => {
-            const days = daysUntil(c.fechaVencimiento)
-            const status = resolveEstadoContrato(c, daysUntil)
-            const isWarning = status === 'por_vencer'
-            const isExpired = status === 'vencido'
-            const isVigente = status === 'vigente'
-            return (
-              <div
-                key={c.id}
-                onClick={() => openDetail(c)}
-                className={`bg-white border border-gray-200 rounded-lg p-4 cursor-pointer
-                  hover:border-pj-accent hover:shadow-md transition-all duration-150
-                  ${isVigente ? 'border-l-[3px] border-l-success' : ''}
-                  ${isWarning ? 'border-l-[3px] border-l-warning' : ''}
-                  ${isExpired ? 'border-l-[3px] border-l-danger' : ''}`}
-              >
-                <div className="text-base font-semibold text-gray-900 mb-0.5">{c.proveedor}</div>
-                <div className="text-xs text-gray-500 mb-3">{c.cobertura || 'Sin descripcion de cobertura'}</div>
-                <div className="flex items-end justify-between">
-                  <div className="flex gap-4">
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">Vencimiento</div>
-                      <div className={`text-sm mt-0.5 font-mono ${isWarning ? 'text-warning font-semibold' : isExpired ? 'text-danger font-semibold' : 'text-gray-700'}`}>
-                        {c.fechaVencimiento || '-'}
+      <div className="rounded-lg border border-gray-200 bg-gray-50/40 p-3.5">
+        {loading ? (
+          <div className="flex justify-center py-16"><Spinner size={8} /></div>
+        ) : visibleItems.length === 0 ? (
+          <EmptyState title="Sin contratos" text="No se encontraron contratos registrados." />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {visibleItems.map(c => {
+              const days = daysUntil(c.fechaVencimiento)
+              const status = resolveEstadoContrato(c, daysUntil)
+              const isWarning = status === 'por_vencer'
+              const isExpired = status === 'vencido'
+              const isVigente = status === 'vigente'
+              return (
+                <div
+                  key={c.id}
+                  onClick={() => openDetail(c)}
+                  className={`bg-white border border-gray-200 rounded-lg p-4 cursor-pointer
+                    hover:border-pj-accent hover:shadow-md transition-all duration-150
+                    ${isVigente ? 'border-l-[3px] border-l-success' : ''}
+                    ${isWarning ? 'border-l-[3px] border-l-warning' : ''}
+                    ${isExpired ? 'border-l-[3px] border-l-danger' : ''}`}
+                >
+                  <div className="text-base font-semibold text-gray-900 mb-0.5">{c.proveedor}</div>
+                  <div className="text-xs text-gray-500 mb-3">{c.cobertura || 'Sin descripcion de cobertura'}</div>
+                  <div className="flex items-end justify-between">
+                    <div className="flex gap-4">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">Vencimiento</div>
+                        <div className={`text-sm mt-0.5 font-mono ${isWarning ? 'text-warning font-semibold' : isExpired ? 'text-danger font-semibold' : 'text-gray-700'}`}>
+                          {c.fechaVencimiento || '-'}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">Estado</div>
+                        <div className="mt-0.5"><ContractStatusBadge estado={status} /></div>
                       </div>
                     </div>
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">Estado</div>
-                      <div className="mt-0.5"><ContractStatusBadge estado={status} /></div>
-                    </div>
+                    {days !== null && (
+                      <div className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                        isVigente
+                          ? 'text-success bg-success-light'
+                          : isWarning
+                            ? 'text-warning bg-warning-light'
+                            : isExpired
+                              ? 'text-danger bg-danger-light'
+                              : 'text-gray-500 bg-gray-100'
+                      }`}>
+                        {days}d
+                      </div>
+                    )}
                   </div>
-                  {days !== null && (
-                    <div className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                      isVigente
-                        ? 'text-success bg-success-light'
-                        : isWarning
-                          ? 'text-warning bg-warning-light'
-                          : isExpired
-                            ? 'text-danger bg-danger-light'
-                            : 'text-gray-500 bg-gray-100'
-                    }`}>
-                      {days}d
-                    </div>
-                  )}
                 </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
+              )
+            })}
+          </div>
+        )}
+
+        {!loading && pagination.totalElements >= 10 && (
+          <div className="mt-3.5 border-t border-gray-200 bg-gray-50/70">
+            <PaginationControls
+              embedded
+              page={page}
+              size={size}
+              totalPages={pagination.totalPages}
+              totalElements={pagination.totalElements}
+              onPageChange={(next) => setPage(Math.max(0, Math.min(next, pagination.totalPages - 1)))}
+              onSizeChange={(nextSize) => {
+                setSize(nextSize)
+                setPage(0)
+              }}
+            />
+          </div>
+        )}
+      </div>
 
       {/* CREATE */}
       <Modal open={showCreate} onClose={() => { setShowCreate(false); setEditingId(null) }} title={editingId ? `Editar Contrato #${editingId}` : 'Nuevo Contrato'}
@@ -365,14 +430,22 @@ export default function Contratos() {
               onChange={e => setForm(p => ({ ...p, fechaVencimiento: e.target.value }))} />
           </FormGroup>
         </div>
-        <FormGroup label="Monto anual">
+        <FormGroup label="Monto anual" error={errors.montoAnual}>
           <input
             type="number"
-            min="0"
+            min="0.01"
             step="0.01"
-            className="form-control"
+            className={`form-control ${errors.montoAnual ? 'error' : ''}`}
             value={form.montoAnual}
-            onChange={e => setForm(p => ({ ...p, montoAnual: e.target.value }))}
+            onKeyDown={(e) => {
+              if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault()
+            }}
+            onChange={e => {
+              const value = e.target.value
+              if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                setForm(p => ({ ...p, montoAnual: value }))
+              }
+            }}
             placeholder="Ej: 1500000"
           />
         </FormGroup>

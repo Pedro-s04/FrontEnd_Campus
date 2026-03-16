@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { usuariosService, organizacionService } from '../services'
 import { useAsync } from '../hooks/useAsync'
-import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast, confirmDialog } from '../components'
+import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, PaginationControls, showToast, confirmDialog } from '../components'
 
 const ROLES_MAP = { 1: 'ADMINISTRADOR', 2: 'OPERADOR', 3: 'TECNICO' }
 
@@ -66,6 +66,32 @@ function normalizeUsuario(user) {
   }
 }
 
+function parsePaginatedData(data, fallbackSize = 10) {
+  const source = data ?? []
+  if (Array.isArray(source)) {
+    return {
+      content: source,
+      number: 0,
+      size: source.length || fallbackSize,
+      totalPages: 1,
+      totalElements: source.length,
+    }
+  }
+
+  const content = Array.isArray(source.content) ? source.content : []
+  const size = Number(source.size) > 0 ? Number(source.size) : fallbackSize
+  const totalElementsRaw = Number(source.totalElements)
+  const totalElements = Number.isFinite(totalElementsRaw) ? totalElementsRaw : content.length
+  const totalPagesRaw = Number(source.totalPages)
+  const totalPages = Number.isFinite(totalPagesRaw) && totalPagesRaw > 0
+    ? totalPagesRaw
+    : Math.max(Math.ceil(totalElements / size), 1)
+  const numberRaw = Number(source.number ?? source.page ?? 0)
+  const number = Number.isFinite(numberRaw) && numberRaw >= 0 ? numberRaw : 0
+
+  return { content, number, size, totalPages, totalElements }
+}
+
 export default function Usuarios() {
   const { run, loading: saving } = useAsync()
 
@@ -75,6 +101,9 @@ export default function Usuarios() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [fRol,       setFRol]       = useState('')
   const [fActivo,    setFActivo]    = useState('')
+  const [page,      setPage]      = useState(0)
+  const [size,      setSize]      = useState(10)
+  const [pagination, setPagination] = useState({ totalPages: 1, totalElements: 0 })
   const [showCreate, setShowCreate] = useState(false)
   const [showEdit,   setShowEdit]   = useState(false)
   const [selected,   setSelected]   = useState(null)
@@ -92,23 +121,35 @@ export default function Usuarios() {
   async function load() {
     setLoading(true)
     try {
-      const params = { page: 0, size: 200 }
+      const params = { page, size }
       if (debouncedSearch) params.search = debouncedSearch
+      if (fRol) params.rol = fRol
       if (fActivo === 'true') params.activo = true
       if (fActivo === 'false') params.activo = false
 
       const res = await usuariosService.listar(params)
-      const d = res.data?.data
-      const list = Array.isArray(d) ? d : d?.content ?? []
-      setItems(list.map(normalizeUsuario))
+      const parsed = parsePaginatedData(res.data?.data ?? res.data, size)
+
+      if (parsed.totalPages > 0 && page >= parsed.totalPages) {
+        setPage(parsed.totalPages - 1)
+        return
+      }
+
+      setItems(parsed.content.map(normalizeUsuario))
+      setPagination({ totalPages: parsed.totalPages, totalElements: parsed.totalElements })
     } catch (err) {
       showToast(getApiError(err, 'Error al cargar usuarios'), 'error')
       setItems([])
+      setPagination({ totalPages: 1, totalElements: 0 })
     }
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [fRol, debouncedSearch, fActivo])
+  useEffect(() => { load() }, [page, size, fRol, debouncedSearch, fActivo])
+
+  useEffect(() => {
+    if (page !== 0) setPage(0)
+  }, [fRol, debouncedSearch, fActivo])
 
   useEffect(() => {
     organizacionService.listarJuzgados()
@@ -310,6 +351,22 @@ export default function Usuarios() {
             </tbody>
           </table>
         </div>
+        {!loading && pagination.totalElements >= 10 && (
+          <div className="border-t border-gray-200 bg-gray-50/70">
+            <PaginationControls
+              embedded
+              page={page}
+              size={size}
+              totalPages={pagination.totalPages}
+              totalElements={pagination.totalElements}
+              onPageChange={(next) => setPage(Math.max(0, Math.min(next, pagination.totalPages - 1)))}
+              onSizeChange={(nextSize) => {
+                setSize(nextSize)
+                setPage(0)
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {/* CREATE */}

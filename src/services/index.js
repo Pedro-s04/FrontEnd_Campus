@@ -56,7 +56,7 @@ export const ticketsService = {
 
 // ── DASHBOARD ────────────────────────────────────────────────
 export const dashboardService = {
-  stats:            ()       => api.get('/dashboard/stats'),
-  ticketsPorJuzgado:()       => api.get('/dashboard/tickets-por-juzgado'),
-  contratosVencer:  (dias=90)=> api.get('/dashboard/contratos-por-vencer', { params: { dias } }),
+  stats:            (params) => api.get('/dashboard/stats', { params }),
+  ticketsPorJuzgado:(params) => api.get('/dashboard/tickets-por-juzgado', { params }),
+  contratosVencer:  (dias = 90, params) => api.get('/dashboard/contratos-por-vencer', { params: { dias, ...(params || {}) } }),
 }

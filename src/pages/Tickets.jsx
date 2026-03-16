@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ticketsService, organizacionService, usuariosService, hardwareService } from '../services'
 import { useAsync } from '../hooks/useAsync'
 import { useAuth } from '../context/AuthContext'
-import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast, confirmDialog } from '../components'
+import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, PaginationControls, showToast, confirmDialog } from '../components'
 
 const ESTADOS     = ['solicitado', 'asignado', 'en_curso', 'cerrado']
 const PRIORIDADES = ['alta', 'media', 'baja']
@@ -91,6 +91,14 @@ function getHardwareTipo(item) {
   return normalizeText(item?.tipo?.nombre || item?.tipoNombre || item?.tipoHardware || item?.tipo)
 }
 
+function getHardwareJuzgadoId(item) {
+  return item?.juzgado?.id ?? item?.juzgadoId ?? item?.idJuzgado ?? ''
+}
+
+function getHardwareJuzgadoNombre(item) {
+  return normalizeText(item?.juzgado?.nombre || item?.juzgadoNombre || item?.nombreJuzgado || '')
+}
+
 function categoryByHardware(item) {
   const tipo = getHardwareTipo(item)
   if (['pc', 'notebook', 'monitor', 'pantalla'].some((v) => tipo.includes(v))) return 'hardware_pc'
@@ -111,6 +119,32 @@ function toHardwareOption(item) {
     item,
     display,
   }
+}
+
+function parsePaginatedData(data, fallbackSize = 10) {
+  const source = data ?? []
+  if (Array.isArray(source)) {
+    return {
+      content: source,
+      number: 0,
+      size: source.length || fallbackSize,
+      totalPages: 1,
+      totalElements: source.length,
+    }
+  }
+
+  const content = Array.isArray(source.content) ? source.content : []
+  const size = Number(source.size) > 0 ? Number(source.size) : fallbackSize
+  const totalElementsRaw = Number(source.totalElements)
+  const totalElements = Number.isFinite(totalElementsRaw) ? totalElementsRaw : content.length
+  const totalPagesRaw = Number(source.totalPages)
+  const totalPages = Number.isFinite(totalPagesRaw) && totalPagesRaw > 0
+    ? totalPagesRaw
+    : Math.max(Math.ceil(totalElements / size), 1)
+  const numberRaw = Number(source.number ?? source.page ?? 0)
+  const number = Number.isFinite(numberRaw) && numberRaw >= 0 ? numberRaw : 0
+
+  return { content, number, size, totalPages, totalElements }
 }
 
 function BitacoraTimeline({ entries }) {
@@ -198,6 +232,9 @@ export default function Tickets() {
   const [showDetail,   setShowDetail]   = useState(false)
   const [showBitacora, setShowBitacora] = useState(false)
   const [showEdit,     setShowEdit]     = useState(false)
+  const [page,      setPage]      = useState(0)
+  const [size,      setSize]      = useState(10)
+  const [pagination, setPagination] = useState({ totalPages: 1, totalElements: 0 })
   const [form,     setForm]     = useState(EMPTY_FORM)
   const [errors,   setErrors]   = useState({})
   const [bText,    setBText]    = useState('')
@@ -209,10 +246,19 @@ export default function Tickets() {
   const [hardwareItems, setHardwareItems] = useState([])
   const [hardwareQuery, setHardwareQuery] = useState('')
 
-  const hardwareOptions = useMemo(
-    () => hardwareItems.map(toHardwareOption),
-    [hardwareItems]
-  )
+  const hardwareOptions = useMemo(() => {
+    const juzgadoSeleccionado = juzgados.find((j) => String(j.id) === String(form.juzgadoId))
+    const juzgadoNombreSel = normalizeText(juzgadoSeleccionado?.nombre)
+
+    const filtered = hardwareItems.filter((item) => {
+      if (!form.juzgadoId) return true
+      const byId = String(getHardwareJuzgadoId(item)) === String(form.juzgadoId)
+      const byName = juzgadoNombreSel && getHardwareJuzgadoNombre(item) === juzgadoNombreSel
+      return Boolean(byId || byName)
+    })
+
+    return filtered.map(toHardwareOption)
+  }, [hardwareItems, juzgados, form.juzgadoId])
 
   useEffect(() => {
     setTecnicosDisponibles(tecnicos)
@@ -228,8 +274,8 @@ export default function Tickets() {
     setLoading(true)
     try {
       const params = {
-        page: 0,
-        size: 50,
+        page,
+        size,
       }
 
       if (ESTADOS.includes(fEstado)) params.estado = fEstado
@@ -243,16 +289,28 @@ export default function Tickets() {
       }
 
       const res = await ticketsService.listar(params)
-      const data = res.data?.data
-      setTickets(Array.isArray(data) ? data : data?.content ?? [])
+      const parsed = parsePaginatedData(res.data?.data ?? res.data, size)
+
+      if (parsed.totalPages > 0 && page >= parsed.totalPages) {
+        setPage(parsed.totalPages - 1)
+        return
+      }
+
+      setTickets(parsed.content)
+      setPagination({ totalPages: parsed.totalPages, totalElements: parsed.totalElements })
     } catch (err) {
       showToast(getApiError(err, 'Error al cargar tickets'), 'error')
       setTickets([])
+      setPagination({ totalPages: 1, totalElements: 0 })
     }
     setLoading(false)
   }
 
-  useEffect(() => { loadTickets() }, [fEstado, fPrioridad, debouncedSearch, isTecnico, user?.id])
+  useEffect(() => { loadTickets() }, [page, size, fEstado, fPrioridad, debouncedSearch, isTecnico, user?.id])
+
+  useEffect(() => {
+    if (page !== 0) setPage(0)
+  }, [fEstado, fPrioridad, debouncedSearch, isTecnico, user?.id])
 
   useEffect(() => {
     if (!canWrite) return
@@ -547,6 +605,22 @@ export default function Tickets() {
             </tbody>
           </table>
         </div>
+        {!loading && pagination.totalElements >= 10 && (
+          <div className="border-t border-gray-200 bg-gray-50/70">
+            <PaginationControls
+              embedded
+              page={page}
+              size={size}
+              totalPages={pagination.totalPages}
+              totalElements={pagination.totalElements}
+              onPageChange={(next) => setPage(Math.max(0, Math.min(next, pagination.totalPages - 1)))}
+              onSizeChange={(nextSize) => {
+                setSize(nextSize)
+                setPage(0)
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {/* CREATE */}
@@ -587,7 +661,8 @@ export default function Tickets() {
               value={form.juzgadoId}
               onChange={e => {
                 const juzgadoId = e.target.value
-                setForm(p => ({ ...p, juzgadoId, tecnicoId: '' }))
+                setForm(p => ({ ...p, juzgadoId, tecnicoId: '', hardwareId: '' }))
+                setHardwareQuery('')
               }}>
               <option value="">Seleccionar juzgado...</option>
               {juzgados.map(j => <option key={j.id} value={j.id}>{j.nombre}</option>)}
@@ -616,6 +691,9 @@ export default function Tickets() {
                 <option key={opt.id} value={opt.display} />
               ))}
             </datalist>
+            {form.juzgadoId && hardwareOptions.length === 0 && (
+              <p className="text-xs text-amber-700 mt-1">No hay equipos activos registrados para el juzgado seleccionado.</p>
+            )}
             {errors.hardwareId && <p className="text-xs text-danger mt-1">{errors.hardwareId}</p>}
           </FormGroup>
         </div>

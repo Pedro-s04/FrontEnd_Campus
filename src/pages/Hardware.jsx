@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { hardwareService, organizacionService } from '../services'
 import { useAsync } from '../hooks/useAsync'
 import { useAuth } from '../context/AuthContext'
-import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, showToast, confirmDialog } from '../components'
+import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, PaginationControls, showToast, confirmDialog } from '../components'
 
 const ESTADOS = ['', 'operativo', 'en_reparacion', 'en_deposito', 'baja']
 const HARDWARE_TYPES = [
@@ -62,6 +62,32 @@ function validateCreate(form) {
   return e
 }
 
+function parsePaginatedData(data, fallbackSize = 10) {
+  const source = data ?? []
+  if (Array.isArray(source)) {
+    return {
+      content: source,
+      number: 0,
+      size: source.length || fallbackSize,
+      totalPages: 1,
+      totalElements: source.length,
+    }
+  }
+
+  const content = Array.isArray(source.content) ? source.content : []
+  const size = Number(source.size) > 0 ? Number(source.size) : fallbackSize
+  const totalElementsRaw = Number(source.totalElements)
+  const totalElements = Number.isFinite(totalElementsRaw) ? totalElementsRaw : content.length
+  const totalPagesRaw = Number(source.totalPages)
+  const totalPages = Number.isFinite(totalPagesRaw) && totalPagesRaw > 0
+    ? totalPagesRaw
+    : Math.max(Math.ceil(totalElements / size), 1)
+  const numberRaw = Number(source.number ?? source.page ?? 0)
+  const number = Number.isFinite(numberRaw) && numberRaw >= 0 ? numberRaw : 0
+
+  return { content, number, size, totalPages, totalElements }
+}
+
 export default function Hardware() {
   const { isAdmin, isOperador } = useAuth()
   const canWrite = isAdmin || isOperador
@@ -77,6 +103,9 @@ export default function Hardware() {
   const [selected, setSelected] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
   const [showEdit,   setShowEdit]   = useState(false)
+  const [page,      setPage]      = useState(0)
+  const [size,      setSize]      = useState(10)
+  const [pagination, setPagination] = useState({ totalPages: 1, totalElements: 0 })
   const [juzgados,   setJuzgados]   = useState([])
   const [errors, setErrors] = useState({})
 
@@ -98,24 +127,35 @@ export default function Hardware() {
   async function load() {
     setLoading(true)
     try {
-      const params = { page: 0, size: 50 }
+      const params = { page, size }
       if (ESTADOS.includes(fEstado) && fEstado) params.estado = fEstado
       if (fTipoId) params.tipoId = Number(fTipoId)
       if (debouncedSearch) params.search = debouncedSearch
       if (fJuzgadoId) params.juzgadoId = Number(fJuzgadoId)
 
       const res = await hardwareService.listar(params)
+      const parsed = parsePaginatedData(res.data?.data ?? res.data, size)
 
-      const d = res.data?.data
-      setItems(Array.isArray(d) ? d : d?.content ?? [])
+      if (parsed.totalPages > 0 && page >= parsed.totalPages) {
+        setPage(parsed.totalPages - 1)
+        return
+      }
+
+      setItems(parsed.content)
+      setPagination({ totalPages: parsed.totalPages, totalElements: parsed.totalElements })
     } catch (err) {
       showToast(getApiError(err, 'Error al cargar hardware'), 'error')
       setItems([])
+      setPagination({ totalPages: 1, totalElements: 0 })
     }
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [fEstado, fTipoId, debouncedSearch, fJuzgadoId])
+  useEffect(() => { load() }, [page, size, fEstado, fTipoId, debouncedSearch, fJuzgadoId])
+
+  useEffect(() => {
+    if (page !== 0) setPage(0)
+  }, [fEstado, fTipoId, debouncedSearch, fJuzgadoId])
 
   useEffect(() => {
     organizacionService.listarJuzgados().then(r => setJuzgados(r.data?.data ?? []))
@@ -293,6 +333,22 @@ export default function Hardware() {
             </tbody>
           </table>
         </div>
+        {!loading && pagination.totalElements >= 10 && (
+          <div className="border-t border-gray-200 bg-gray-50/70">
+            <PaginationControls
+              embedded
+              page={page}
+              size={size}
+              totalPages={pagination.totalPages}
+              totalElements={pagination.totalElements}
+              onPageChange={(next) => setPage(Math.max(0, Math.min(next, pagination.totalPages - 1)))}
+              onSizeChange={(nextSize) => {
+                setSize(nextSize)
+                setPage(0)
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {/* Create */}
