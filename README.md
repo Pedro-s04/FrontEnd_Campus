@@ -129,3 +129,9 @@ VITE_EMAILJS_SERVICE_ID=...
 VITE_EMAILJS_TEMPLATE_ID=...
 VITE_EMAILJS_PUBLIC_KEY=...
 ```
+
+Para que las notificaciones por correo funcionen en otra PC:
+
+1. Renombrar `.env.example` a `.env`.
+2. Completar los valores de `VITE_EMAILJS_SERVICE_ID`, `VITE_EMAILJS_TEMPLATE_ID` y `VITE_EMAILJS_PUBLIC_KEY`.
+3. Levantar nuevamente con `docker compose up -d --build`.

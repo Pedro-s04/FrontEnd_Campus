@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext'
 import { PageHeader, Badge, Modal, FormGroup, SearchInput, EmptyState, Spinner, PaginationControls, showToast, confirmDialog } from '../components'
 import { getApiError, getValidationDetail } from '../utils/api'
 import { parsePaginatedData } from '../utils/pagination'
+import { getEmailJsConfig, getMissingEmailJsEnvKeys, NOTIFICATIONS_CONFIG_MESSAGE } from '../utils/emailjsConfig'
 
 const ESTADOS     = ['solicitado', 'asignado', 'en_curso', 'cerrado']
 const PRIORIDADES = ['alta', 'media', 'baja']
@@ -31,22 +32,6 @@ const getEmailErrorDetail = (err) => {
   const detail = [status, text].filter(Boolean).join(' - ')
 
   return detail || 'Error desconocido de EmailJS.'
-}
-
-const readEnvValue = (...keys) => {
-  for (const key of keys) {
-    const value = import.meta.env?.[key]
-    if (typeof value === 'string' && value.trim()) return value.trim()
-  }
-  return ''
-}
-
-const getEmailJsConfig = () => {
-  const serviceId = readEnvValue('VITE_EMAILJS_SERVICE_ID', 'VITE_EMAILJS_SERVICE')
-  const templateId = readEnvValue('VITE_EMAILJS_TEMPLATE_ID', 'VITE_EMAILJS_TEMPLATE')
-  const publicKey = readEnvValue('VITE_EMAILJS_PUBLIC_KEY', 'VITE_EMAILJS_USER_ID', 'VITE_EMAILJS_KEY')
-
-  return { serviceId, templateId, publicKey }
 }
 
 const normalizeText = (value) =>
@@ -152,13 +137,10 @@ function toHardwareOption(item) {
 async function sendTicketNotificationByEmail({ ticketId, descripcion, juzgado, prioridad, tecnicoEmail, tecnicoNombre }) {
   const config = getEmailJsConfig()
 
-  const missingKeys = []
-  if (!config.serviceId) missingKeys.push('VITE_EMAILJS_SERVICE_ID')
-  if (!config.templateId) missingKeys.push('VITE_EMAILJS_TEMPLATE_ID')
-  if (!config.publicKey) missingKeys.push('VITE_EMAILJS_PUBLIC_KEY')
+  const missingKeys = getMissingEmailJsEnvKeys(config)
 
   if (missingKeys.length > 0) {
-    throw new Error(`EmailJS no esta configurado. Falta definir: ${missingKeys.join(', ')}`)
+    throw new Error(`${NOTIFICATIONS_CONFIG_MESSAGE}. Falta definir: ${missingKeys.join(', ')}`)
   }
 
   if (!emailJsInitialized) {
@@ -464,6 +446,7 @@ export default function Tickets() {
     setErrors({})
 
     let createdTicket = null
+    let notificationSent = false
 
     try {
       const basePayload = {
@@ -491,6 +474,17 @@ export default function Tickets() {
       createdTicket = createRes?.data?.data ?? createRes?.data ?? null
 
       if (createRes?.status === 201) {
+        const missingEmailConfig = getMissingEmailJsEnvKeys()
+        if (missingEmailConfig.length > 0) {
+          const warningDetail = `${NOTIFICATIONS_CONFIG_MESSAGE}. Falta definir: ${missingEmailConfig.join(', ')}`
+          console.warn(warningDetail)
+          await Swal.fire({
+            icon: 'warning',
+            title: NOTIFICATIONS_CONFIG_MESSAGE,
+            text: `Falta definir: ${missingEmailConfig.join(', ')}`,
+            confirmButtonText: 'Aceptar',
+          })
+        } else {
         const ticketId = createdTicket?.id || createdTicket?.ticketId || ''
         const juzgadoNombre =
           juzgados.find((j) => String(j.id) === String(form.juzgadoId))?.nombre
@@ -518,6 +512,8 @@ export default function Tickets() {
           tecnicoEmail,
           tecnicoNombre: tecnicoSeleccionado?.nombre || '',
         })
+          notificationSent = true
+        }
       }
 
       setShowCreate(false)
@@ -525,7 +521,7 @@ export default function Tickets() {
       setHardwareQuery('')
       await loadTickets()
 
-      if (createRes?.status === 201) {
+      if (createRes?.status === 201 && notificationSent) {
         await Swal.fire({
           icon: 'success',
           title: 'Ticket creado y operador notificado',
