@@ -19,6 +19,22 @@ services:
     networks:
       - pj_net
 
+  phpmyadmin:
+    image: phpmyadmin:5-apache
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      MYSQL_ROOT_PASSWORD: root
+      TZ: America/Argentina/Buenos_Aires
+    ports:
+      - "8080:80"
+    networks:
+      - pj_net
+
   backend:
     build:
       context: ${BACKEND_CONTEXT:-../BackEnd_Campus}

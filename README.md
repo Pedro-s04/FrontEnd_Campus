@@ -27,6 +27,16 @@ Abrir en el navegador:
 
 **http://localhost:3000**
 
+Para administrar la base de datos con interfaz web (phpMyAdmin):
+
+**http://localhost:8080**
+
+Credenciales por defecto de este compose:
+
+- Servidor: `db`
+- Usuario: `root`
+- Contrasena: `root`
+
 Ese es el endpoint principal para validar que todo funciona.
 
 ### 4) Ver estado de servicios
